@@ -1,0 +1,837 @@
+# Copyright (C) 2009 by Zajcev Evegny <zevlg@yandex.ru>
+
+import pygame, random, math
+
+from misc import *
+from constants import *
+
+class SHobj:
+    def __init__(self):
+        """Object of physical world of SealHunter."""
+        self.x = self.y = self.z = 0.0  # position
+        self.x_speed = self.y_speed = self.z_speed = 0.0 # speeds
+
+        # Additional friction and bouncing factor
+        self.x_fric = self.y_fric = 1.0
+        self.bouncing = 3
+
+    def xx(self): return round(self.x)
+    def yy(self): return round(self.y-self.z)
+    def zz(self): return round(self.z)
+
+    def apply_xfric(self):
+        """Apply friction on x axis."""
+        # Air has no friction
+        if self.z != 0: return
+
+        if self.x_speed < 0:
+            self.x_speed += ICE_XFRIC*self.x_fric
+            if self.x_speed > 0: self.x_speed = 0
+        elif self.x_speed > 0:
+            self.x_speed -= ICE_XFRIC*self.x_fric
+            if self.x_speed < 0: self.x_speed = 0
+
+    def apply_yfric(self):
+        """Apply friction on y exis."""
+        # Air has no friction
+        if self.z != 0: return
+
+        if self.y_speed < 0:
+            self.y_speed += ICE_YFRIC*self.y_fric
+            if self.y_speed > 0: self.y_speed = 0
+        elif self.y_speed > 0:
+            self.y_speed -= ICE_YFRIC*self.y_fric
+            if self.y_speed < 0: self.y_speed = 0
+
+    def apply_friction(self):
+        """Apply both X and Y axis frictions."""
+        self.apply_xfric()
+        self.apply_yfric()
+
+    def apply_speed(self):
+        """Change object position according to its speeds."""
+        self.x += self.x_speed
+        self.y += self.y_speed
+        self.z += self.z_speed
+
+        if self.z > 0:
+            # G acceleration
+            self.z_speed -= G_ACCEL
+        else:
+            # Possible bounce
+            self.z = 0.0
+            if self.z_speed < -self.bouncing*G_ACCEL:
+                self.z_speed = -(self.z_speed/2)
+            else:
+                self.z_speed = 0.0
+
+    def apply_motion(self):
+        """Apply speed and friction."""
+        self.apply_speed()
+        self.apply_friction()
+
+    def is_quiescent(self):
+        """Return True if object is in quiescent state."""
+        return self.x_speed == 0 and self.y_speed == 0 and self.z_speed == 0
+
+def setobjattrs(obj, kwargs, defaults):
+    """For OBJ set ANAMES attributes that are in KWA."""
+    for k in defaults:
+        setattr(obj, k, defaults[k])    # default value
+        if kwargs.has_key(k):
+            setattr(obj, k, kwargs[k])
+
+class WithReflection:
+    """Object with reflection.
+Sprite used in reflection must be in self.scs
+KWARGS may contain `reflection' and `opaque' key.
+WithReflection is error prone class, use with caution,
+make sure your object has next attributes:
+ * add  - method to add sprite to some group
+ * scs  - Sprite used for reflection
+ * tick - Clocked tick method
+ * x, y, z - Coordinates """
+    def __init__(self, **kwargs):
+        setobjattrs(self, kwargs, {"reflection": False,
+                                   "opaque": REFLECTION_OPAQUE})
+
+        # Reflections cache
+        self.reflections = {}
+
+        if self.reflection:
+            self.scrfs = dirty_sprite()
+            self.scrfs._layer = -1
+            self.add(self.scrfs)
+
+    def update_reflection(self):
+        if not self.reflection: return
+
+        if not self.reflections.has_key(self.scs.image):
+            tim = pygame.transform.flip(self.scs.image, False, True)
+            tim.set_alpha(self.opaque)
+            self.reflections[self.scs.image] = tim
+
+        self.scrfs.image = self.reflections[self.scs.image]
+        self.scrfs.rect = self.scs.rect.copy()
+        self.scrfs.rect.y += self.scs.rect.h + self.z*1.25
+
+        # XXX Adjust reflection location according to state
+        # in case of AnimateStates
+        if hasattr(self, "states_setup"):
+            _sset = self.states_setup
+            _ss = self.state
+            _si = self.state_idx
+            if _sset.has_key(_ss) and _sset[_ss].has_key(_si):
+                self.scrfs.rect.y -= 2*(self.scs.rect.h-_sset[_ss][_si][0][1])
+
+        self.scrfs.dirty = 1
+
+class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
+    def __init__(self, **kwargs):
+        if hasattr(self, "scs"): self.scs.kill()
+        else: self.scs = dirty_sprite()
+
+        pygame.sprite.OrderedUpdates.__init__(self)
+        SHobj.__init__(self)
+        WithReflection.__init__(self, **kwargs)
+
+        setobjattrs(self, kwargs, {"x":0,"y":0,"z":0,
+                                   "x_speed":0,"y_speed":0,"z_speed":0,
+                                   "bouncing":4, "can_stop": False})
+        self.add(self.scs)
+
+    def __getattr__(self, attr):
+        if attr == "rect": return self.scs.rect
+        elif attr == "image": return self.scs.image
+        raise AttributeError
+
+#     def __setattr__(self, attr, av):
+#         if attr == "rect": self.scs.rect = av
+#         elif attr == "image": self.scs.image = av
+#         else: self.__dict__[attr] = av
+
+    def update(self):
+        move_sprite(self.scs, self.xx(), self.yy())
+        self.update_reflection()
+
+    def tick(self, f):
+        self.apply_motion()
+        if (self.is_quiescent() and not self.can_stop) \
+               or not f.is_inside(self.x,self.y):
+            f.remove(self)
+        else:
+            self.update()
+
+class FallingClip(MovingObj):
+    def __init__(self, falling, final_textures, **kwargs):
+        kwargs["reflection"] = "clips" in option("reflections")
+        MovingObj.__init__(self, **kwargs)
+        self.textures = final_textures
+
+        self.scs.image = load_texture(falling)
+        self.update()
+
+    def tick(self, f):
+        MovingObj.tick(self, f)
+        if self.is_quiescent():
+            rdclip = self.textures[random.randrange(0, len(self.textures))]
+            f.draw_static(load_texture(rdclip), self.xx(), self.yy())
+
+class Animate(pygame.sprite.OrderedUpdates):
+    def __init__(self, adir, **kwargs):
+        """Animate ADIR.
+Set LOOP to loop animation
+if LOOP is False and KEEP_LAST is set then keep last image on screen
+when animation finished.
+TICKS_STEP specifies amount of ticks between images.
+
+Does not do anything about image placement,
+so you must manage scs.rect for yourself."""
+        if hasattr(self, "scs"): self.scs.kill()
+        else: self.scs = dirty_sprite()
+
+        pygame.sprite.OrderedUpdates.__init__(self)
+        setobjattrs(self, kwargs, {"loop": True, "keep_last": False,
+                                   "ticks_step": 2})
+
+        self.anim = load_animation(adir)
+        self.ticks = self.state = 0
+
+        self.scs.image = self.anim[self.state]
+        self.add(self.scs)
+
+    def update(self):
+        self.scs.image = self.anim[self.state]
+        self.scs.dirty = 1
+
+    def draw_static(self, f):
+        """Draw current animation at field's F static layer."""
+        f.draw_static(self.scs.image, self.scs.rect[0], self.scs.rect[1])
+
+    def tick(self, f):
+        self.ticks += 1
+        if self.ticks % self.ticks_step != 0:
+            return
+
+        self.state += 1
+        if self.state == len(self.anim):
+            if self.loop:
+                self.state = 0
+            else:
+                self.state -= 1
+                f.remove(self)
+                if self.keep_last: self.draw_static(f)
+                return
+        self.update()
+
+class AnimateStates(pygame.sprite.OrderedUpdates):
+    """Very generic class for animated object with states."""
+    def __init__(self, dir, start_state, **kwargs):
+        if hasattr(self, "scs"): self.scs.kill()
+        else: self.scs = dirty_sprite()
+
+        pygame.sprite.OrderedUpdates.__init__(self)
+        setobjattrs(self, kwargs, {"states_setup": {},
+                                   "ticks_step": 2})
+
+        self.states = {}
+        for st in os.listdir("textures/%s"%dir):
+            if st == "CVS": continue    # XXX
+            self.states[st] = load_animation("%s/%s"%(dir,st))
+        self.state = start_state
+        self.state_idx = 0
+
+        self.state_ticks = 0
+
+        self.update()
+        self.add(self.scs)
+
+    def state_frames(self, state=None):
+        if state is None: state = self.state
+        return len(self.states[self.state])
+
+    def state_start(self, state):
+        if self.state != state:
+            self.state = state
+            self.state_idx = 0
+            self.state_ticks = 0
+            # Setup ticks_step
+            _sss = self.states_setup
+            if _sss.has_key(self.state) and \
+                   _sss[self.state].has_key("ticks_step"):
+                self.ticks_step = _sss[self.state]["ticks_step"]
+            self.update()
+            self.apply_position()
+            return True
+        return False
+
+    def state_inc(self, keep_last=False):
+        self.state_idx += 1
+        if self.state_idx == self.state_frames():
+            _sss = self.states_setup
+            if keep_last or \
+                   (_sss.has_key(self.state) and \
+                    _sss[self.state].has_key("keep_last") \
+                    and _sss[self.state]["keep_last"]):
+                self.state_idx -= 1
+            else:
+                self.state_idx = 0
+
+    def state_baselines(self):
+        """Return tuple of (x-baseline, y-baseline) position."""
+        _sset = self.states_setup
+        _ss = self.state
+        _si = self.state_idx
+        if _sset.has_key(_ss) and _sset[_ss].has_key(_si):
+            return _sset[_ss][_si][0]
+        return 0, 0
+
+    def state_headbounds(self):
+        """Return relative top-left, bottom-right head bounds.
+        (None,None) in case head is undefined."""
+        _sss = self.states_setup
+        if _sss.has_key(self.state):
+            return _sss[self.state][self.state_idx][1:]
+        return (None, None)
+
+    def update_reflection(self):
+        """Take into account baselines, when updating reflections."""
+        MovingObj.update_reflection(self)
+        _, yo = self.state_baselines()
+        self.scrfs.rect.y -= 2*(self.scs.rect.h-yo)
+
+    def apply_state_setup(self):
+        """Apply baseline offsets to sprite's rectangle."""
+        xo, yo = self.state_baselines()
+        self.scs.rect.x -= xo
+        self.scs.rect.y -= yo
+
+    def apply_position(self):
+        """Move sprite to its display position, aplying baseline offsets."""
+        move_sprite(self.scs, self.xx(), self.yy())
+        self.apply_state_setup()
+
+    def update(self):
+        self.scs.image = self.states[self.state][self.state_idx]
+
+    def tick(self, f):
+        self.state_ticks += 1
+        _sts = self.ticks_step
+        if self.state_ticks % (_sts+1) == _sts:
+            self.state_inc()
+            self.update()
+
+    def is_headshot(self, prj):
+        """Return True if projectile PRJ hits a HEAD."""
+        # Head shot if PRJ hits either A or B segments of head boundary
+        #        +-----------+
+        #        |           | __/
+        #        |         __*<----- hit
+        #       A|      __/  |B
+        #        |  ___/     |
+        #        +-/---------+
+        #
+        #        +--/--------+
+        #        | /         |
+        #       A|/          |
+        # hit--> *           |B
+        #       /|           |
+        #        +-----------+
+        ht, hb = self.state_headbounds()
+        print ht, hb
+        if ht and hb:
+            x, y = self.scs.rect.x, self.scs.rect.y
+            ht = (ht[0]+x, ht[1]+y)
+            hb = (hb[0]+x, hb[1]+y)
+            def inr(y): return y >= ht[1] and y <= hb[1]
+            return inr(prj.bully(hb[0])) and inr(prj.bully(ht[0]))
+        return False
+
+class AnimateObj(Animate, MovingObj):
+    def __init__(self, adir, **kwargs):
+        Animate.__init__(self, adir, **kwargs)
+        MovingObj.__init__(self, **kwargs)
+
+        # Bouncing sounds
+        self.bs_idx = 0
+        setobjattrs(self, kwargs, {"bounce_sounds":[]})
+
+        self.update_ao()
+
+    # This is done this way to avoid calling update on
+    # Animate and MovingObj ticks
+    def update(self): pass
+
+    def update_ao(self):
+        Animate.update(self)
+        MovingObj.update(self)
+
+    def tick(self, f):
+        # Play bounce sound in case object is bouncing
+        if self.bs_idx < len(self.bounce_sounds) and self.z+self.z_speed < 0:
+            if RANDOM_BOUNCE_SOUNDS:
+                play_rnd_sound(self.bounce_sounds)
+            else:
+                play_sound(self.bounce_sounds[self.bs_idx])
+            self.bs_idx += 1
+
+        Animate.tick(self, f)
+        MovingObj.tick(self, f)
+        if self.is_quiescent():
+            if self.keep_last: self.draw_static(f)
+            return
+
+        self.update_ao()
+
+class AnimateClip(AnimateObj):
+    def __init__(self, adir, **kwargs):
+        kwargs["keep_last"] = True
+        kwargs["reflection"] = "clips" in option("reflections")
+        AnimateObj.__init__(self, adir, **kwargs)
+
+        # Special for rotating clips
+        setobjattrs(self, kwargs, {"x_fric": 2.0, "y_fric": 2.0,
+                                   "bouncing": 2})
+
+class AnimateShell(AnimateObj):
+    def __init__(self, adir, **kwargs):
+        kwargs["keep_last"] = True
+        kwargs["reflection"] = "shells" in option("reflections")
+        AnimateObj.__init__(self, adir, **kwargs)
+        # Special for shells
+        setobjattrs(self, kwargs, {"x_fric": 2.0, "y_fric": 2.0,
+                                   "bouncing": 10})
+
+class SmallClip(FallingClip):
+    def __init__(self, **kwargs):
+        p = "Misc/SmallClip"
+        FallingClip.__init__(self, "%s/smallclip_falling_1.png"%p,
+                             ["%s/smallclip_%d.png"%(p,c)
+                              for c in range(1,6)],
+                             **kwargs)
+
+class MACClip(FallingClip):
+    def __init__(self, **kwargs):
+        p = "Misc/MACClip"
+        FallingClip.__init__(self, "%s/macclip_falling.png"%p,
+                             ["%s/macclip_%d.png"%(p,c) for c in range(1,6)],
+                             **kwargs)
+
+class MP5Clip(AnimateClip):
+    def __init__(self, **kwargs):
+        AnimateClip.__init__(self, "Misc/MP5Clip", **kwargs)
+
+class AWPClip(AnimateClip):
+    def __init__(self, **kwargs):
+        AnimateClip.__init__(self, "Misc/AWPClip", **kwargs)
+
+def Shell(name, **kwargs):
+    """Create shell of NAME.
+NAME can be one of:
+ * small
+ * normal
+ * shotgun
+ * awp
+ * minigun"""
+    name = name.capitalize()
+    if not kwargs.has_key("bounce_sounds"):
+        if name == "Small":
+            bnc = ["weapons/sshell%d.wav"%s for s in range(1,7)]
+        elif name == "Normal" or name == "Minigun" or name == "Awp":
+            bnc = ["weapons/shell%d.wav"%s for s in range(1,7)]
+        elif name == "Shotgun":
+            bnc = ["weapons/shshell%d.wav"%s for s in range(1,6)]
+        else:
+            bnc = []
+        kwargs["bounce_sounds"] = map(load_sound, bnc)
+    # Correct the name
+    if name == "Normal": name = "Small"
+    elif name == "Awp": name = "Minigun"
+    return AnimateShell("Misc/%sShell"%name, **kwargs)
+
+def AnimateOnce(adir, x, y, **kwargs):
+    kwargs["loop"] = False
+    a =  Animate(adir, **kwargs)
+    move_sprite(a.scs, x, y)
+    return a
+
+class Muzzle(Animate, WithReflection):
+    def __init__(self, name, weapon, xo=0, yo=0, **kwargs):
+        """Create muzzle for WEAPON."""
+        Animate.__init__(self, "Muzzle/"+name.capitalize(),
+                         ticks_step=1, loop=False)
+        kwargs["reflection"] = "muzzle" in option("reflections")
+        WithReflection.__init__(self, **kwargs)
+
+        self.weapon = weapon
+        self.xo, self.yo = xo, yo
+
+        self.update()
+
+    def update(self):
+        Animate.update(self)
+        w, h = self.scs.image.get_size()
+        self.x = self.weapon.player.xx()-self.weapon.x-1-w+self.xo
+        self.y = self.weapon.player.yy()+self.weapon.aim_position-1-h/2+self.yo
+        self.z = (2*self.weapon.player.scs.rect.h-2*self.weapon.aim_position-h+1-self.yo)/1.25
+        self.scs.rect = pygame.Rect((self.x,self.y),(w,h))
+
+        self.update_reflection()
+
+class EarnMoney(pygame.sprite.DirtySprite):
+    def __init__(self, amount, x, y, **kwargs):
+        pygame.sprite.DirtySprite.__init__(self)
+        # defaults
+        self.font = load_font("default.ttf", 12)
+        self.font_color = (255,0,0)
+
+        for k in kwargs:
+            setattr(self, k, kwargs[k])
+
+        self.x, self.y = x, y
+        self.ticks = 0
+        self.image = self.font.render("%d$"%amount, False, self.font_color).convert()
+        self.x -= self.image.get_width()/2
+        self.image.set_alpha(100)
+        move_sprite(self, x, y)
+
+    def tick(self, f):
+        self.ticks += 1
+        if (self.ticks == 50):
+            f.remove(self)
+            return
+
+        ia = self.image.get_alpha()
+        self.image.set_alpha(ia-2)
+        self.y -= 1
+        move_sprite(self, self.x, self.y)
+
+
+# Projectile stuff
+class Explosion(Animate):
+    def __init__(self, projectile, x, y):
+        Animate.__init__(self, "Explosion", ticks_step=1,
+                         loop=False, keep_last=True)
+        self.projectile = projectile
+        self.splash_radius = projectile.weapon.splash_radius
+        self.radius = 0
+        self.radius_inc = self.splash_radius/5.0
+        self.hited_creatures = []       # list of already hited creatures
+        self.energy = projectile.weapon.damage
+
+        for i in range(len(self.anim)-1):
+            # Max i is 16, so last frame is fully transparent
+            self.anim[i].set_alpha(255-i**2+1)
+        # Special for splat
+        self.anim[len(self.anim)-1].set_alpha(50)
+
+        self.x, self.y = x + 4, y + 6
+        self.update()
+
+        play_sound(load_sound("weapons/3/explosion.wav"))
+
+    def splash_rectangles(self, radius):
+        """Aproximate splash circle of RADIUS with rectangles."""
+        retrects = []
+        steps = 20
+        for i in range(1, steps-1):
+            ca = math.pi/steps
+            x0 = math.cos(i*ca)
+            y0 = math.sin(i*ca)
+            x1 = math.cos((i+1)*ca)
+            y1 = math.sin((i+1)*ca)
+            w = int(abs(x1-x0)*radius)
+            x,y = int(radius*min(x0, x1)), int(radius*min(y0, y1))
+            retrects.append(pygame.Rect(self.x+x,self.y-y,w,y*2))
+        return retrects
+
+    def splash_collides(self, creatures):
+        """Return creatures list for whom explosion splash collides."""
+        acrects = map(lambda o: o.scs.rect, creatures)
+        retcrs = []
+        for sr in self.splash_rectangles(self.radius):
+            cixds = sr.collidelistall(acrects)
+            for ci in cixds:
+                if creatures[ci] not in retcrs:
+                    retcrs.append(creatures[ci])
+        return retcrs
+
+    def distance_to_epi(self, rect):
+        """Return distance from epicentre to rect."""
+        if rect.collidepoint(self.x, self.y): return 0
+
+        xo = abs(self.x-rect.centerx)-rect.w/2-2
+        yo = abs(self.y-rect.centery)-rect.h/2-3
+        return math.sqrt(xo**2+yo**2)
+
+    def apply_hits(self, f):
+        self.radius += self.radius_inc
+        nhcreatures = filter(lambda o: o not in self.hited_creatures,
+                             f.creatures())
+        hitcrts = self.splash_collides(nhcreatures)
+        for hc in hitcrts:
+            dd = self.splash_radius-self.distance_to_epi(hc.scs.rect)
+            dmg = int((self.energy*dd*1.0)/self.splash_radius)
+            hc.hit(self.projectile, dmg)
+            self.hited_creatures.append(hc)
+
+    def update(self):
+        Animate.update(self)
+        _ss = self.scs
+        _ss.rect = _ss.image.get_rect()
+        _ss.rect.center = (self.x,self.y)
+
+    def tick(self, f):
+        if self.ticks < 5: self.apply_hits(f)
+        Animate.tick(self, f)
+
+class Projectile:
+    def __init__(self, weapon):
+        self.weapon = weapon
+        self.player = weapon.player
+        self.energy = weapon.damage
+
+    def is_grenade(self):
+        """Return True if projectile is grenade or flunk rocket."""
+        return isinstance(self, (Grenade, FlunkRocket))
+
+    def is_bullet(self):
+        """Return True if projectile is a bullet."""
+        return not self.is_grenade()
+
+class Grenade(Projectile, AnimateObj):
+    def __init__(self, weapon, **kwargs):
+        Projectile.__init__(self, weapon)
+
+        kwargs["reflection"] = "grenades" in option("reflections")
+        kwargs["can_stop"] = True
+        AnimateObj.__init__(self, "Weapons/Granat", **kwargs)
+
+        dwargs = {"bounce_sounds": map(load_sound,
+                                       ["weapons/3/bounce%d.wav"%s
+                                        for s in range(1,4)]),
+                  "ticks_step": 1, "x_fric": 20, "y_fric": 20,
+                  "bouncing": 1.9}
+        setobjattrs(self, kwargs, dwargs)
+
+    def tick(self, f):
+        AnimateObj.tick(self, f)
+        if self.is_quiescent() or self.ticks == 50:
+            f.remove(self)
+            exp = Explosion(self, self.xx(), self.yy())
+            f.add(exp)
+
+class FlunkRocket(Projectile, AnimateObj):
+    def __init__(self, weapon, **kwargs):
+        Projectile.__init__(self, weapon)
+
+        kwargs["reflection"] = "grenades" in option("reflections")
+        kwargs["can_stop"] = True
+        AnimateObj.__init__(self, "Weapons/Granat2", **kwargs)
+
+        setobjattrs(self, kwargs, {"x_fric": 12, "y_fric": 6})
+
+    def tick(self, f):
+        AnimateObj.tick(self, f)
+        if self.is_quiescent() or self.collides(f.creatures()):
+            f.remove(self)
+            exp = Explosion(self, self.xx(), self.yy())
+            f.add(exp)
+
+    def collides(self, creatures):
+        """Return true if rocket collides with some creature."""
+        crects = map(lambda o: o.scs.rect, creatures)
+        return self.scs.rect.collidelist(crects) != -1
+
+class Bullet(Projectile):
+    def __init__(self, weapon, field):
+        Projectile.__init__(self, weapon)
+        self.field = field
+
+        # Get random angle according to accuracy_angle
+        waa = int(1000.0*self.weapon.accuracy_angle)
+        adeg = random.randint(-waa,waa)/1000.0
+        self.angle = math.sin(adeg*math.pi/180)
+
+        # Fire starts here
+        self.fx = int(self.player.xx() - self.weapon.x)
+        self.fy = int(self.player.yy() + self.weapon.aim_position)
+
+        # Bullet points
+#         self.points = [(self.fx-x,int(x*self.angle+self.fy))
+#                        for x in range(self.fx+1)]
+
+        # Draw bullet tray
+        if "bullets" in option("show"):
+            x0 = random.randint(0,self.fx)
+            x1 = random.randint(0,self.fx)
+            bt = BulletTray((x0,self.bully(x0)),
+                            (x1,self.bully(x1)))
+            field.add(bt)
+
+        self.apply_hits(field)
+
+    def bully(self, bx):
+        """Calculate bullet's y according to bullet's x BX."""
+        return self.fy + int((self.fx-bx)*self.angle)
+
+    def collide(self, creature):
+        """Return tuple of creature and hitpoint
+if bullet collides CREATURE."""
+        def crpos(rp):
+            if rp[1] > self.bully(rp[0]): return 1
+            else: return -1
+
+        _cr = creature.scs.rect
+        if _cr.left > self.fx: return False
+        crcorns = [_cr.topleft,_cr.topright,_cr.bottomright,_cr.bottomleft]
+        if abs(sum(map(crpos, crcorns))) == 4:
+            return False
+
+        # Check precisely using creature's mask
+        cm = pygame.mask.from_surface(creature.scs.image)
+        xoff, yoff = _cr.topleft
+        sx = min(_cr.right,self.fx)
+        while sx > xoff:
+            sy = self.bully(sx)
+            if _cr.collidepoint(sx, sy) and cm.get_at((sx-xoff,sy-yoff)):
+                return (creature, (sx,sy))
+            sx -= 1 
+        return False
+
+    def apply_hits(self, f):
+        hitcols = filter(lambda x:x, map(self.collide, f.creatures()))
+        hitcrts = sorted(hitcols, key=lambda hro: hro[1][0], reverse=True)
+        for hc, hp in hitcrts:
+            if self.energy < 1:
+                break
+
+            self.x, self.y = hp
+            # randomize hit position a little
+            self.x -= random.randint(0,2)
+
+            hc.hit(self, self.energy)
+            self.energy *= self.weapon.pierce
+
+class BulletTray(pygame.sprite.DirtySprite):
+    def __init__(self, start, end, color=(255,255,0)):
+        pygame.sprite.DirtySprite.__init__(self)
+        self.image = pygame.Surface((abs(end[0]-start[0]),
+                                     abs(end[1]-start[1])+1))
+
+        ck = (0,0,0)
+        self.image.fill(ck)
+        self.image.set_colorkey(ck)
+        self.image.set_alpha(BULLET_OPAQUE)
+
+        x,y = min(end[0],start[0]),min(end[1],start[1])
+        pygame.draw.line(self.image, color, (start[0]-x,start[1]-y),
+                         (end[0]-x,end[1]-y))
+        move_sprite(self, x, y)
+
+    def tick(self, f):
+        f.remove(self)
+
+class Creature(MovingObj):
+    """Generic class for creatures."""
+    def __init__(self, life, **kwargs):
+        MovingObj.__init__(self, **kwargs)
+        setobjattrs(self, kwargs, {"field":None})
+
+        self.slife = self.life = life
+        self.ticks = self.total_hit = 0
+
+        r9 = range(9)
+        self.hs_sounds = [load_sound("misc/headshot%d.wav"%d) for d in r9]
+        self.hit_sounds = [load_sound("misc/genhit%d.wav"%d) for d in r9]
+
+    def is_alive(self):
+        """Return True if creature is alive."""
+        return self.life > 0
+
+    def update(self, f):
+        """Overrides MovingObj update method."""
+        pass
+
+    def tick(self, f):
+        """Overrides MovingObj tick method.
+So you must define you own tick if inheriting Creature."""
+        self.ticks += 1
+        self.total_hit = 0
+
+    def hit(self, prj, damage):
+        if prj.is_bullet() and self.is_headshot(prj):
+            damage *= self.headshot_multiplier
+            # earn money for the headshot
+            if self.headshot_bonus > 0:
+                prj.weapon.player.earn_money(self.headshot_bonus)
+
+        # take into account damage_inc
+        damage += prj.weapon.damage_inc * (self.field.level.num-1)
+
+        self.total_hit += damage
+        self.life -= damage
+
+        # Cause the hit
+        if prj.is_bullet():
+            if self.is_headshot(prj): play_rnd_sound(self.hs_sounds)
+            else: play_rnd_sound(self.hit_sounds)
+
+            hframes = 1+min(int(damage/30), 2)
+            self.field.add(Hit(prj.x, prj.y, frames=hframes))
+
+        if not self.is_alive():
+            self.die(prj)
+            prj.weapon.player.earn_money(self.bounty)
+
+    def die(self, prj):
+        pass
+
+    def is_headshot(self, prj):
+        return False
+
+
+# Blood
+class Hit(Animate):
+    def __init__(self, x, y, frames=3):
+        Animate.__init__(self, "Blood/Hit", loop=False, ticks_step=1)
+        self.anim = self.anim[:frames]
+        self.x, self.y = x, y
+        self.update()
+
+    def update(self):
+        Animate.update(self)
+        w, h = self.scs.image.get_size()
+        move_sprite(self.scs, self.x-w/2, self.y-h/2)
+
+class Particle(AnimateObj):
+    def __init__(self, pname, **kwargs):
+        kwargs["reflection"] = "particles" in option("reflections")
+        AnimateObj.__init__(self, pname, **kwargs)
+
+        self.x_fric = self.y_fric = 10
+        self.bouncing = 20
+
+    def tick(self, f):
+        AnimateObj.tick(self, f)
+        if self.is_quiescent():
+            f.draw_static(self.scs.image, self.scs.rect[0],
+                          self.scs.rect[1])
+
+class BloodParticle(MovingObj):
+    def __init__(self, w, h, **kwargs):
+        kwargs["reflection"] = "blood" in option("reflections")
+        MovingObj.__init__(self, **kwargs)
+
+        # can't slide and bounce
+        self.x_fric = self.y_fric = 100
+        self.bouncing = 100
+
+        self.scs.image = gen_blood(w, h)
+        move_sprite(self.scs, self.x, self.y)
+
+    def tick(self, f):
+        MovingObj.tick(self, f)
+        if self.is_quiescent():
+            _ss = self.scs
+            f.draw_blood(_ss.image, _ss.rect.x, _ss.rect.y)
