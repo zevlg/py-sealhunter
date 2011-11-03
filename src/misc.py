@@ -130,7 +130,7 @@ def play_sound(snd, stop=False, **kwargs):
     if option("sound"):
         if stop: snd.stop()
         _sc = snd.play(**kwargs)
-        if _sc: _sc.set_volume(option("sound-volume"))
+        if _sc: _sc.set_volume(option("volume"))
         return _sc
 
 def play_rnd_sound(sounds):
@@ -138,8 +138,24 @@ def play_rnd_sound(sounds):
         play_sound(choice(sounds))
 
 def gen_blood(w, h):
+    # TODO: probably introduce some kind of blood particles cache
     bs = pygame.Surface((2*w,2*h)).convert_alpha()
     bs.fill((255,255,255,0))
     rr = randint(0,60)
-    pygame.gfxdraw.filled_ellipse(bs, w,h,w,h, pygame.Color(140+rr,rr/2,rr/2,255))
+    pygame.gfxdraw.filled_ellipse(bs, w, h, w, h,
+                                  pygame.Color(140+rr,rr/2,rr/2,255))
     return pygame.transform.smoothscale(bs, (w, h))
+
+def key2keycode(key):
+    from pygame import constants as pyconsts
+    # key in form 'up' 'a', etc
+    # 1. Try K_<KEY>
+    # 2. Try K_<Key>
+    upk = "K_%s"%key.upper()
+    if hasattr(pyconsts, upk):
+        return getattr(pyconsts, upk)
+    lck = "K_%s"%key.lower()
+    if hasattr(pyconsts, lck):
+        return getattr(pyconsts, lck)
+
+    raise Exception, "Unknown key: %s"%key

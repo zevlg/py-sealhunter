@@ -71,8 +71,14 @@ class Field(LayeredDirty):
     def next_level(self):
         self.level = self.levels.next()
 
+        # - Remove old splash if any
+        for o in self.objects:
+            if o.__class__ == LevelSplash:
+                self.remove(o)
+                break
+
         # NOTE: LevelSplash will call start_level after fading out
-        self.add(LevelSplash(self.level.num))
+        self.add(LevelSplash(self.level.num, self))
 #        self.level_prgrs._visible = True
 
     def start_level(self):
@@ -109,7 +115,12 @@ class Field(LayeredDirty):
     def add(self, *args, **kwargs):
         """Add object O to field object list."""
         LayeredDirty.add(self, *args, **kwargs)
-        self.objects.extend(args)
+
+        for o in args:
+            if hasattr(o, "tick"):
+                self.objects.append(o)
+#        self.objects.extend(args)
+
 ##        if kwargs.get("append", False):
 ##            self.objects.extend(args)
 ##        else:
@@ -118,7 +129,12 @@ class Field(LayeredDirty):
     def remove(self, *args):
         """Remove object O from field's object list."""
         LayeredDirty.remove(self, *args)
-        map(self.objects.remove, args)
+
+        # remove from ticking objects as well
+        for o in args:
+            if o in self.objects:
+                self.objects.remove(o)
+#        map(self.objects.remove, args)
 
     def tick(self):
         def redraw_screen():
@@ -135,9 +151,13 @@ class Field(LayeredDirty):
             self.level.tick(self)
         self.render_level_progress()
 
-        for o in self.objects:
-            if hasattr(o, "tick"):
-                o.tick(self)
+        def tick_object(o):
+            o.tick(self)
+
+        map(tick_object, self.objects)
+##        for o in self.objects:
+##            if hasattr(o, "tick"):
+##                o.tick(self)
 
         # Draw FPS
         if "fps" in option("show"): self.update_fps()

@@ -8,7 +8,7 @@ from misc import *
 from enemies import *
 
 class LevelSplash(pygame.sprite.DirtySprite):
-    def __init__(self, num):
+    def __init__(self, num, f):
         pygame.sprite.DirtySprite.__init__(self)
         self.ticks = 0
 
@@ -20,7 +20,7 @@ class LevelSplash(pygame.sprite.DirtySprite):
 
         _si = self.image
         _si.set_alpha(0)
-        _si.blit(pygame.display.get_surface(), (0,0), self.rect)
+        _si.blit(f.start, (0,0), self.rect)
         _lt = "Level %d"%num
         _ltf = _sfont.render(_lt, True, (255,255,255))
         for _place in [(i,j) for i in [0,2] for j in [0,2]]:
@@ -56,7 +56,8 @@ class Level:
                              ticks=-1) for (e,n) in enemies]
 
     def start(self):
-        debug("Level %d started!"%self.num)
+        if 'level' in option("debug"):
+            debug("Level: Level %d started!"%self.num)
         self.started = True
         map(self.gen_next_enemy, self.enemies)
 
@@ -105,7 +106,9 @@ class Level:
             enemy["togo"] -= 1
         else:
             enemy["ticks"] = -1
-        print "ENEMY gen", enemy
+
+        if 'level' in option("debug"):
+            debug("Level: enemy gen %s"%enemy)
 
     def tick(self, f):
         for e in self.enemies:

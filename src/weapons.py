@@ -28,7 +28,7 @@ class MetaWeapon(type):
 
         # setup textures
         hndirs = {"Pistol":"USP", "VintageShotgun":"Farfar",
-                  "M4":"Colt", "Grenades":"grenade"}
+                  "M4":"Colt", "Grenades":"Grenade"}
         wpn = hndirs.get(name, name)
         texdir = "Weapons/Hands/%s"%wpn
         setobjattrs(cls, WEAPONS[name],

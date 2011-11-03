@@ -116,7 +116,10 @@ class Enemy(AnimateStates, Creature):
 
     def hit(self, prj, damage, head=False):
         """Enemy has been hited."""
-        debug("Hit, damage=%d, totalhit=%d"%(damage,self.total_hit))
+        if 'enemy' in option("debug"):
+            debug("Enemy: Hit, damage=%d, totalhit=%d"
+                  %(damage,self.total_hit))
+
         if head and prj.is_bullet():
             # Spill some blood particles
             zv = self.y - prj.y
@@ -485,14 +488,19 @@ class Aktivist(Enemy, WithYSpeed):
         Enemy.hit(self, prj, damage, head=head)
 
         # Record the head bullet
-        debug("aktivist head=%s"%head)
+        if 'enemy' in option("debug"):
+            debug("Enemy: aktivist head=%s"%head)
         if not has_fp and hasattr(self, "fatal_projectile") \
                and prj.is_bullet() and head and damage > self.slife/2:
-            debug("HEADSHOT!")
+            if 'enemy' in option("debug"):
+                debug("Enemy: HEADSHOT!")
             self.fatal_projectile.headshoted_aktivist = True
 
         seal_rect = Rect(self.x+4, self.y-13, 14, 7)
-        debug("Aktivist seal_rect=%s, prj=%d/%d"%(seal_rect,prj.x,prj.y))
+        if 'enemy' in option("debug"):
+            debug("Enemy: Aktivist seal_rect=%s, prj=%d/%d"
+                  %(seal_rect, prj.x, prj.y))
+
         if self.has_seal and prj.is_bullet() \
                and seal_rect.collidepoint(prj.x, prj.y) \
                and (self.is_alive() or self.ticks < 6):
@@ -516,7 +524,7 @@ class Aktivist(Enemy, WithYSpeed):
         # stop the creature
         self.init_speeds(0)
 
-        if self.life < -3.5*self.slife:
+        if self.life < -1.5*self.slife:
             # GIB
             self.gib_gen(("Blood/Gib/AktivistHead", 26),
                          (choice(tglob("Blood/Gib/AktivistPart*")), 8),
@@ -689,7 +697,7 @@ class Pingvin(Enemy, WithYSpeed):
 
     def die(self, prj):
         Creature.die(self, prj)
-        if self.life < -4.0*self.slife:
+        if self.life < -2.0*self.slife:
             self.gib_gen(("Blood/Gib/PingvinHead", 26),
                          (choice(tglob("Blood/Gib/PingvinPart*")), 8),
                          (choice(tglob("Blood/Gib/PingvinTorso*")), 20),
@@ -818,18 +826,23 @@ class Bear(Enemy):
         _lk = (1.0*self.life)/self.slife # life left koeff
         self.x_speed = _ssr[0] + (_ssr[1]-_ssr[0])*((1-_lk)**2)
 
-        if self.x_speed < 1: self.state_ticks = 4
-        elif self.x_speed < 1.5: self.state_ticks = 3
-        elif self.x_speed < 2: self.state_ticks = 2
-        elif self.x_speed < 2.5: self.state_ticks = 1
-        else:
+        if self.x_speed < 1:
+            self.state_ticks = 4
+        elif self.x_speed < 1.5:
+            self.state_ticks = 3
+        elif self.x_speed < 2:
+            self.state_ticks = 2
+        elif self.x_speed < 2.5:
+            self.state_ticks = 1
+        elif self.state != "Running":
             self.state_start("Running")
             self.state_ticks = 1
 ##            if self.x_speed < 3.5: self.state_ticks = 4
 ##            elif self.x_speed < 4.5: self.state_ticks = 3
 ##            else: self.state_ticks = 2
-        debug("Bear enraged: speed=%f, sticks=%d"
-              %(self.x_speed, self.state_ticks))
+        if 'enemy' in option("debug"):
+            debug("Bear enraged: speed=%f, sticks=%d"
+                  %(self.x_speed, self.state_ticks))
 
     def die(self, prj):
         Creature.die(self, prj)
@@ -876,7 +889,10 @@ class Turtle(Enemy):
     def hit(self, prj, damage, head=False):
         """Creature has been hitted by projectile PRJ by DAMAGE.
 If HEAD is True, then creature has been headshoted."""
-        print "TURTLE hit", prj, damage, head
+        if "enemy" in option("debug"):
+            debug("Enemy: TURTLE hit, prj=%s dmg=%d head=%s"
+                  %(prj, damage, head))
+
         if self.state == "KrypaIn" \
                or (not head and self.y - prj.y > 5):
             if prj.is_bullet():
@@ -897,7 +913,7 @@ If HEAD is True, then creature has been headshoted."""
     def krypain(self):
         self.x_speed = 0
         self.state_start("KrypaIn")
-        self.hide_damage = self.HURT_DAMAGE
+        self.hide_damage = Turtle.HURT_DAMAGE
         self.kryperut_ticks = self.ticks + 100
 
     def tick(self, f):
@@ -940,3 +956,5 @@ class Valross(Enemy):
             12:(8,18), 13:(8,18), 14:(8,18),
             15:(9,18), 16:(8,18)}
             }
+        #TODO
+

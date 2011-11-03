@@ -12,7 +12,7 @@ from constants import *
 
 from enemies import Aktivist
 
-def start_sealhunter():
+def start_sealhunter(config=None):
     options_load()
 
     # Initialize everything we need from pygame
@@ -21,13 +21,20 @@ def start_sealhunter():
     pygame.mixer.set_num_channels(32)
 
     pygame.display.set_icon(pygame.image.load("textures/Misc/sh-icon.png"))
-    if option("fullscreen"): vflags = FULLSCREEN
-    else: vflags = HWSURFACE|DOUBLEBUF
+    vflags = HWSURFACE | DOUBLEBUF
+    if option("fullscreen"):
+        vflags |= FULLSCREEN
+#    else: vflags = HWSURFACE|DOUBLEBUF
     pygame.display.set_mode((640, 480), vflags)
     pygame.display.set_caption('SealHunter v%s'%__version__)
     pygame.mouse.set_visible(0)
 
-    new_game(["Clark Kent", "Peter Parker"])
+    cons = None
+    if config:
+        cons = setup_console()
+        cons.send_command("exec %s"%config)
+
+    new_game(["Clark Kent", "Peter Parker"], cons)
 #    return
 
     menu.menu_init()
@@ -70,30 +77,29 @@ def new_game(players_names, cons=None):
 
     players[0].earn_money(100000)
     players[0].apply_earned_money()
+
+    # optimization, player handles down/up, so no repeating
+    pygame.key.set_repeat()
+
     while not fld.game_over:
-        for event in pygame.event.get():
+        kevents = pygame.event.get()
+        for event in kevents:
             if event.type == QUIT or \
-                   (event.type == KEYDOWN and event.key == K_ESCAPE):
+                   (event.type == KEYUP and event.key == K_ESCAPE):
                 debug("Final FPS: %f"%fld.clock.get_fps())
                 return
 
-            if event.type == KEYDOWN:
-                debug("KeyDown: %d/%s"%(event.key, pygame.key.name(event.key)))
-            if event.type == KEYDOWN and event.key == K_F2:
-                done = False
-                while not done:
-                    for event in pygame.event.get():
-                        if (event.type == KEYDOWN and event.key == K_ESCAPE):
-                            return
-                        if (event.type == KEYDOWN and event.key == K_F2):
-                            done = True
+            if 'keys' in option("debug") and event.type == KEYDOWN:
+                debug("Keys: KeyDown: %d/%s"
+                      %(event.key, pygame.key.name(event.key)))
 
             # Maybe console event
             # NOTE: Use console to pause games
             shcons.handle_event(event)
 
             # Player event ?
-            for p in players: p.handle_event(event)
+            for p in players:
+                p.handle_event(event)
 
         fld.tick()
 

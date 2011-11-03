@@ -1,13 +1,11 @@
-import os
-import random
-import pygame
-import settings
+import os, random, pygame
+from misc import option
 
 class Music:
     MUSIC_FINISHED = 59859
     def __init__(self):
-        self.tracks = os.listdir(settings.MUSIC_DIR)
-        if settings.MUSIC_SHUFFLE:
+        self.tracks = os.listdir(option("music-dir"))
+        if option("music-shuffle"):
             random.shuffle(self.tracks)
         self.track = 0
 

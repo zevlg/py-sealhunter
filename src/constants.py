@@ -222,7 +222,7 @@ ENEMIES = {"Bruns":
 
            # TODO: valross yet has invalid values
            "Valross":
-           dict(life=(10000, 0), boss_life=(10000),
+           dict(life=(10000, 0), boss_life=10000,
                 ticks_step=1, speed_range=(0.3, 8),
                 can_press=True, bounty=50000,
                 headshot_multiplier=2)
@@ -252,7 +252,7 @@ PLAYER_CHCOLOR = (0x3B, 0x6B, 0xCB)
 
 P1_SETUP = {"name": "Clark Kent",
             "enabled": True,
-            "skin": (0,0,180),
+            "skin": (0, 0, 180),
             "hud-position": (0, 12),
             "crosshair": True,
             "crosshair-color": (0x3B, 0x6B, 0xCB),
@@ -262,16 +262,16 @@ P1_SETUP = {"name": "Clark Kent",
             "show-hud": True,
             "start-at": (620, 220),
             "sniper-sight-color": [(255,0,0,50),(255,100,0,50)],
-            "keys": {'Left': K_LEFT, 'Right': K_RIGHT,
-                     'Up': K_UP, 'Down': K_DOWN,
-                     'Fire': K_SPACE, 'Reload': K_LSHIFT,
-                     'Buy': K_RETURN, 'Switch': K_CAPSLOCK },
+            "keys": {K_LEFT:'left', K_RIGHT:'right',
+                     K_UP:'up', K_DOWN:'down',
+                     K_SPACE:'fire', K_LSHIFT:'reload',
+                     K_RETURN:"buy", K_CAPSLOCK:"switch"},
             "autokill-crawling-bruns": True,
             "autobuy-list": []}
 
 P2_SETUP = {"name": "Peter Parker",
             "enabled": True,
-            "skin": (0,180,0),
+            "skin": (0, 180, 0),
             "hud-position": (590, 12),
             "crosshair": True,
             "crosshair-color": (0x87, 0x2F, 0x00),
@@ -290,7 +290,7 @@ P2_SETUP = {"name": "Peter Parker",
 
 P3_SETUP = {"name": "Max Eisenhardt",
             "enabled": True,
-            "skin": (150,0,150),
+            "skin": (150, 0, 150),
             "crosshair": True,
             "crosshair-color": (0x87, 0x2F, 0x00),
             "crosshair-info": True,
@@ -303,16 +303,19 @@ P3_SETUP = {"name": "Max Eisenhardt",
             "autokill-crawling-bruns": True,
             "autobuy-list": []}
 
+DEBUG_TYPES = ["player", "enemy", "weapon", "particle",
+               "reflection", "level", "boss", "keys"]
+
 DEFAULT_OPTIONS = {"reflections": ["player", "enemies", "weapon",
                                    "muzzle", "clips", "shells",
                                    "grenades", "particles"],
                    "accurate-fps": False,
-                   "debug": True,
+                   "debug": (),
                    "fullscreen": False,
 
                    # Sounds settings
                    "sound": True,
-                   "sound-volume": 0.5,   # 0.0 - 1.0
+                   "volume": 0.5,       # 0.0 - 1.0
 
                    # Music settings
                    "music": False,

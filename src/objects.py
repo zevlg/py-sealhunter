@@ -110,6 +110,9 @@ make sure your object has next attributes:
     def update_reflection(self):
         if not self.reflection: return
 
+        if 'reflection' in option("debug"):
+            debug("REFLECTION: %s", self)
+
         if not self.reflections.has_key(self.scs.image):
             tim = pygame.transform.flip(self.scs.image, False, True)
             tim.set_alpha(self.opaque)

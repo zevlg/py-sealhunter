@@ -27,7 +27,7 @@ import textwrap                         # Used for proper word wrapping
 from string import ascii_letters
 from code import InteractiveConsole     # Gives us access to the python interpreter
 
-from misc import load_font, option, options, options_load
+from misc import load_font, option, options, options_load, key2keycode
 from constants import *
 
 WIDTH, HEIGHT = 0, 1
@@ -36,56 +36,132 @@ OUT, IN, ERR = 0, 1, 2
 options_load()
 FS = option("fullscreen")
 def fullscreen(c):
+    """/fs - Toggle fullscreen"""
     global FS
     pygame.display.set_mode((640,480), FULLSCREEN if not FS else 0)
     FS = not FS
+
 def windowed(c):
+    """/windowed - Force windowed mode."""
     pygame.display.set_mode((640,480), HWSURFACE|DOUBLEBUF)
 
 def bind(c, arg):
-    """usage: /bind <key> <command>"""
-    pass
+    """/bind <player> <key> <command> - Bind <key> to execute <command>
+       Built-in commands: left, right, up, down, fire, reload, buy, switch"""
+    sarg = arg.split()
+    pidx = int(sarg[0])
+    kcode = key2keycode(sarg[1])
+    cmd = " ".join(sarg[2:])
+    
+    psetup = option("players")
+    psetup[pidx]["keys"][kcode] = cmd
+
+    if 'f' not in c.locals:
+        return
+    fld = c.locals["f"]
+    fld.players()[pidx].profile["keys"][kcode] = cmd
+
+def skin(c, arg):
+    """/skin <player> <color> - Set skin for the player."""
+    sarg = arg.split()
+    pidx = int(sarg[0])
+    skin = pygame.Color(sarg[1])
+
+    psetup = option("players")
+    psetup[pidx]["skin"] = skin
+
+    if 'f' not in c.locals:
+        return
+    fld = c.locals["f"]
+    fld.players()[pidx].set_skin(skin)
+
 def alias(c, arg):
-    """usage: /alias <newname> <oldname>"""
+    """/alias <newname> <oldname> - Define command <newname> to execute <oldname> command"""
     global commands
     k, v = arg.split()
     commands[k] = commands[v]
 
 def say(c, arg):
-    """usage: /say <message>"""
-    _fld = c.locals["f"]
-    _fld.players()[0].say(arg)
-#    c.output(arg)
+    """/say <player> <message> - Say the <message> to the public.
+                                 <player> - index of the player"""
+    pidx, msg = arg.split()
+
+    if 'f' not in c.locals:
+        return
+    fld = c.locals["f"]
+    fld.players()[pidx].say(arg)
 
 def get_option(c, arg):
-    """usage: /get <optname>"""
+    """/get <optname> - Print value for <optname>"""
     if not options().has_key(arg):
         c.output("- Unknown option: %s"%arg)
+        c.output("Available options: %s"%options().keys())
     else:
         c.output("%s => %s"%(arg, repr(option(arg))))
 
 def set_option(c, arg):
-    """usage: /set <optname> <value>"""
+    """/set <optname> <value> - Set <optname> to <value>"""
     k, v = arg.split()
     options()[k] = eval(v)
     get_option(c, k)
 
 def quit(c):
+    """/quit - Quit the game."""
     sys.exit(0)
 
-def screenshot(c, arg):
-    """usage: /screenshot <filename>"""
-    pygame.image.save(pygame.display.get_surface(), arg)
+def screenshot(c, fn=None):
+    """/screenshot [<filename>] - Take a screenshot"""
+    if not fn:
+        import time
+        fn = "sealhunter-%s.png"%time.strftime("%Y-%m-%d--%X")
 
-commands = {"fs":fullscreen,
-            "get":get_option,
-            "set":set_option,
-            "quit":quit,
+    c.message("+ Screenshot -> %s"%fn)
+    pygame.image.save(pygame.display.get_surface(), fn)
+
+def exec_file(c, arg):
+    """/exec <file> - Execute file with commands."""
+    def comments(l):
+        l = l.lstrip()
+        if not l or l[0] == "#":
+            return False
+        return True
+
+    with open(arg, "r") as f:
+        map(c.send_command, filter(comments, f))
+
+def echo(c, arg):
+    """/echo <msg> - Output message to the console"""
+    c.output(arg)
+
+def level(c, arg):
+    """/level <num> - Start player level <NUM>."""
+    import levels
+    import itertools
+
+    lvl = int(arg) - 1
+
+    if 'f' not in c.locals:
+        return
+    fld = c.locals["f"]
+    fld.levels = iter([levels.Level1(fld), levels.Level2(fld),
+                       levels.Level3(fld), levels.Level4(fld),
+                       levels.Level5(fld)][lvl:])
+    fld.next_level()
+
+def help(c):
+    """/help - Print available commands."""
+    global commands
+    for cmd, cfun in commands.iteritems():
+        c.output("%s"%cfun.__doc__)
+
+commands = {"fs":fullscreen, "get":get_option,
+            "set":set_option, "quit":quit,
             "screenshot": screenshot,
-            "wind":windowed,
-            "bind":bind,
-            "alias":alias,
-            "say": say}
+            "wind":windowed, "bind":bind,
+            "skin":skin, "alias":alias,
+            "say": say, "level":level,
+            "exec":exec_file, "echo":echo,
+            "help": help}
 
 class Writable(list):
     line_pointer = -1
@@ -178,7 +254,7 @@ class Console:
         self.ps3 = CONSOLE_PS3
         self.active = CONSOLE_ACTIVE
         self.repeat_rate = CONSOLE_REPEAT_RATE
-        self.motd = CONSOLE_MOTD
+        self.motd = CONSOLE_MOTD + ["+ Use /help to list commands"]
 
     def output(self, text):
         """Prepare text to be displayed
@@ -272,6 +348,14 @@ class Console:
             self.tmp_fds = []
             [fd.reset() for fd in self.py_fds]
 
+    def message(self, msg):
+        """Show message on the field or in the console."""
+        if 'f' in self.locals and not self.active:
+            fld = self.locals['f']
+            fld.message(msg)
+        else:
+            self.output(msg)
+        
     def submit_input(self, text):
         '''\
         Submit input
@@ -303,13 +387,14 @@ class Console:
         if len(cmd_arg) > 1: arg = (cmd_arg[1],)
         else: arg = ()
         if cmd not in commands.keys():
-            self.output("Unknown command: %s"%cmd)
+            self.message("Unknown command: %s"%cmd)
         else:
             # execute command and print it's output
             try:
                 ret = apply(commands[cmd], (self,)+arg)
-                if ret: self.output("Ret: %s"%ret)
-            except NameError:
+                if ret:
+                    self.output("Ret: %s"%ret)
+            except TypeError:
                 # Show command usage
                 self.output(commands[cmd].__doc__)
         self.release_output()
@@ -366,8 +451,8 @@ class Console:
         return foo
 
     def handle_event(self, event):
-        pic = pygame.display.get_surface().copy()
         if event.type == KEYDOWN and event.key in CONSOLE_KEYS:
+            pic = pygame.display.get_surface().copy()
             self.active = True
             while self.active:
                 self.process_input()

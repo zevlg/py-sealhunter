@@ -1,5 +1,7 @@
 # Copyright (C) 2009 by Zajcev Evegny <zevlg@yandex.ru>
 
+from itertools import *
+
 import pygame
 
 import weapons
@@ -9,7 +11,14 @@ from misc import *
 from enemies import Bruns, Vits
 from hud import hud
 
+def command(meth):
+    """Decorator to execute method as command."""
+    def cmd(self, event, arg):
+        meth(self, arg)
+    return cmd
+
 class Player(AnimateStates, Creature):
+    STATES_WITH_WEAPON = ['Walking', 'Stopped', 'InAir', 'Jump', 'JumpFall']
     def __init__(self, profile, **kwargs):
         ss = {"Stopped":{0:[(5,19), (2,0), (11,9)]},
               "Walking":{0:[(6,19), (3,0), (12,9)],
@@ -57,22 +66,18 @@ class Player(AnimateStates, Creature):
         # Player profile (name, skin, keys, etc)
         self.profile = profile
         self.money = self.earned_money = 0
-        self.keysdown = []
-
-        # Substitute colors in state images according to skin
-        def convt(t):
-            return substitute_color(t.copy(), PLAYER_SCOLOR,
-                                    self.profile["skin"])
-        for st in self.states:
-            self.states[st] = map(convt, self.states[st])
+        self.keysdown = set()
 
         # Player this game statistics
         self.pstats = {"kills": 0,      # total kills
-                       "avg_damage":0,  # average damage per shot
+                       "avg-damage":0,  # average damage per shot
                        "damage": 0,     # total damage given
                        "kills-stats": {}, # per enemy kills statistics
                        "distance": 0,   # distance move
                       }                 # player statistics
+
+        # Change the skin
+        self.apply_skin()
 
         # Cross and cross info
         self.font = load_font("default.ttf", MONEY_FONT_SIZE)
@@ -107,6 +112,35 @@ class Player(AnimateStates, Creature):
         if self.profile["show-hud"]:
             self.hud = hud(self)
             self.add(self.hud)
+
+    def apply_skin(self):
+        # Substitute colors in state images according to skin
+        def convt(t):
+            return substitute_color(t.copy(), PLAYER_SCOLOR,
+                                    self.profile["skin"])
+
+        for st in self.states:
+            self.states[st] = map(convt, self.states[st])
+        
+    def set_skin(self, skin):
+        """Set new skin for the player."""
+        if 'player' in option("debug"):
+            debug("Set skin: %s"%(skin,))
+
+        # Reload states to ensure they have PLAYER_SCOLOR color
+        self.states = dict([(basename(dr), load_animation(dr))
+                            for dr in tglob("Player1/*")])
+
+        self.profile["skin"] = skin
+        self.apply_skin()
+
+        # NOTE: money-info has player's color
+        if self.profile["money-info"]:
+            self.setup_money_info()
+
+        # And update the player's sprite as well
+        self.update()
+        self.scs.dirty = 1
 
     def setup_crosshair(self):
         self.cross = dirty_sprite()
@@ -172,21 +206,17 @@ class Player(AnimateStates, Creature):
     def states_with_weapon(self):
         return ['Walking', 'Stopped', 'InAir', 'Jump', 'JumpFall']
 
-    def can_fire(self):
-        """Return True if player can fire."""
-        return self.state in ['Walking', 'Stopped', 'InAir', 'Jump']
-
     def tick(self, f):
-        def crawling_brunsals():
-            def is_crawling(c):
-                return c.state in ["StartCrawl", "Crawl"]
-            return filter(is_crawling, self.field.creatures(Bruns))
-
         # possible change state
         AnimateStates.tick(self, f)
 
-        # Check if there crawling bruns under falling player
+        # Check if there are crawling bruns under falling player
         if self.z_speed < 0 and self.z < (abs(self.z_speed)+G_ACCEL):
+            def crawling_brunsals():
+                def is_crawling(c):
+                    return c.state in ["StartCrawl", "Crawl"]
+                return filter(is_crawling, self.field.creatures(Bruns))
+
             crbruns = crawling_brunsals()
             csix = self.rect.collidelistall(map(lambda c: c.rect, crbruns))
             for ci in csix:
@@ -195,9 +225,9 @@ class Player(AnimateStates, Creature):
                 crbruns[ci].die("KrossatHuvud")
             self.apply_earned_money()
 
+        # Adjust player's state
         if self.can_walk():
-            if ('Left' in self.keysdown or 'Right' in self.keysdown or \
-                'Up' in self.keysdown or 'Down' in self.keysdown):
+            if self.keysdown & set(['left', 'right', 'up', 'down']):
                 self.state_start('Walking')
             else:
                 self.state_start('Stopped')
@@ -206,7 +236,9 @@ class Player(AnimateStates, Creature):
                 self.state_start('JumpFall')
         elif self.state == 'JumpFall':
             if self.z == 0:
-                debug("After jump: %d,%d"%(self.x, self.y))
+                if 'player' in option("debug"):
+                    debug("After jump: %d,%d"%(self.x, self.y))
+
                 self.x_speed /= 2.0
                 self.y_speed /= 2.0
                 self.z_speed = 0
@@ -226,19 +258,19 @@ class Player(AnimateStates, Creature):
 
         # Move player if not in air and walking
         if self.z == 0 and self.state in 'Walking':
-            if 'Left' in self.keysdown and self.x_speed > -PLAYER_XMAX:
+            if 'left' in self.keysdown and self.x_speed > -PLAYER_XMAX:
                 self.x_speed -= PLAYER_XACC
-            if 'Right' in self.keysdown and self.x_speed < PLAYER_XMAX:
+            if 'right' in self.keysdown and self.x_speed < PLAYER_XMAX:
                 self.x_speed += PLAYER_XACC
-            if 'Up' in self.keysdown and self.y_speed > -PLAYER_YMAX:
+            if 'up' in self.keysdown and self.y_speed > -PLAYER_YMAX:
                 self.y_speed -= PLAYER_YACC
-            if 'Down' in self.keysdown and self.y_speed < PLAYER_YMAX:
+            if 'down' in self.keysdown and self.y_speed < PLAYER_YMAX:
                 self.y_speed += PLAYER_YACC
 
         self.apply_speed()
-        if not ('Up' in self.keysdown or 'Down' in self.keysdown):
+        if not (self.keysdown & set(['up', 'down'])):
             self.apply_yfric()
-        if not ('Left' in self.keysdown or 'Right' in self.keysdown):
+        if not (self.keysdown & set(['left', 'right'])):
             self.apply_xfric()
 
         # Check that player is inside field
@@ -253,26 +285,13 @@ class Player(AnimateStates, Creature):
             self.y_speed = 0
 
         # process keys
-        if self.state in self.states_with_weapon():
-            if 'Fire' in self.keysdown:
+        if self.state in Player.STATES_WITH_WEAPON:
+            if 'fire' in self.keysdown:
                 if self.weapon.fire(f):
                     self.x_speed += self.weapon.x_recoil
                     self.z_speed += self.weapon.z_recoil
                     if self.profile["show-hud"]:
                         self.hud.update_bullets(self.weapon)
-            if 'Reload' in self.keysdown:
-                self.weapon.reload(f)
-            if 'Buy' in self.keysdown and self.weapon.state != 'Fire':
-                self.buy_weapon()
-                self.keyup('Buy')
-            if 'Switch' in self.keysdown and self.weapon.state != 'Fire':
-                # Switch to next/prev weapon
-                nwidx = self.weapons.index(self.weapon)
-                twpns = len(self.weapons)
-                if nwidx == (twpns-1) and twpns > 1: nwidx -= 1
-                elif nwidx < (twpns-1): nwidx += 1
-                self.switch_weapon(self.weapons[nwidx])
-                self.keyup('Switch')
 
         # Check the life and damage before Creature.tick
         if self.total_hit > 0:
@@ -355,6 +374,7 @@ class Player(AnimateStates, Creature):
         self.earned_money += amount
 
     def apply_earned_money(self):
+        """Apply earned, by this tick, money to the player."""
         if self.earned_money != 0:
             self.money += self.earned_money
 
@@ -379,25 +399,17 @@ class Player(AnimateStates, Creature):
         if self.profile["show-hud"]:
             self.hud.update_money(self.money)
 
-    def keydown(self, key):
-        if not key in self.keysdown:
-            self.keysdown.append(key)
-    def keyup(self, key):
-        if key in self.keysdown:
-            self.keysdown.remove(key)
-
     def handle_event(self, event):
         keys = self.profile["keys"]
         if event.type not in [KEYDOWN, KEYUP]:
             return
 
         # For debug
-        if event.type == KEYUP:
+        if 'player' in option("debug") and event.type == KEYUP:
             if event.key == 49:
                 self.buy_weapon("Magnum")
             elif event.key == 50:
                 self.buy_weapon("Pistol")
-                self.jump_at(self.x, self.y)
             elif event.key == 51:
                 self.buy_weapon("MP5")
             elif event.key == 52:
@@ -410,31 +422,51 @@ class Player(AnimateStates, Creature):
                 self.buy_weapon("M4")
             elif event.key == 56:
                 self.buy_weapon("AWP")
-                self.jump_at(self.x, self.y)
             elif event.key == 57:
                 self.buy_weapon("VintageShotgun")
             elif event.key == 48:
                 self.buy_weapon("Minigun")
 
-        if event.key not in keys.values():
-            return
+        # Execute the binding
+        if keys.has_key(event.key):
+            scmd = keys[event.key].partition(" ")
+            cmd = getattr(self, scmd[0], self.invalid_cmd)
+            cmd(event, scmd[2])
 
-        for k in keys:
-            if keys[k] == event.key:
-                if event.type == KEYDOWN:
-                    self.keydown(k)
-                else:
-                    self.keyup(k)
+    # Commands
+    def invalid_cmd(self, event, arg):
+        if event.type == KEYDOWN:
+            keys = self.profile["keys"]
+            cmd = keys[event.key]
 
-    def jump_at(self, x, y):
-        """Jump to position X,Y."""
+            if cmd and cmd[0] == "/":
+                # Possible a console command
+                self.field.console.send_command(cmd[1:])
+            else:
+                self.say0("- Invalid command: %s"%cmd)
+
+    def generic_cmd(self, event, arg):
+        keys = self.profile["keys"]
+        if event.type == KEYDOWN:
+            self.keysdown.add(keys[event.key])
+        elif event.type == KEYUP:
+            self.keysdown.remove(keys[event.key])
+
+    def say0(self, msg):
+        """Say the message MSG."""
+        self.field.message("%s: %s"%(self.profile["name"], msg))
+
+    def jump_zxy(self, z, xc=1.0, yc=1.0):
+        """Jump with zspeed Z."""
         self.state_start("Jump")
 
-        debug("Before jump: %d,%d"%(self.x, self.y))
+        if 'player' in option("debug"):
+            debug("Before jump: %d,%d"%(self.x, self.y))
+
         # calculate speeds
-        self.x_speed = (x-self.x)/38.0
-        self.y_speed = (y-self.y)/38.0
-        self.z_speed = 6
+        self.z_speed = z
+        self.x_speed *= xc
+        self.y_speed *= yc
 
         play_rnd_sound(self.sounds["jump"])
 
@@ -452,10 +484,6 @@ class Player(AnimateStates, Creature):
         # Astonish some vitseal
         vitses = self.field.creatures(Vits)
         if vitses: choice(vitses).nosa()
-
-    def say(self, msg):
-        """Say the message MSG."""
-        self.field.message("%s: %s"%(self.profile["name"], msg))
 
     def hit(self, prj, dmg, head=False):
         """Player has been wounded by projectile PRJ and damage DMG."""
@@ -479,29 +507,80 @@ class Player(AnimateStates, Creature):
             if prj.x > self.x: self.x_speed -= ek
             else: self.x_speed += ek
 
-        f = self.field
+# Few command decorators, see below the usage
+def event_type(et):
+    """Decorator to execute cmd only for given event type ET."""
+    def cmd_method(meth):
+        def command(self, event, arg):
+            if event.type == et:
+                meth(self, event, arg)
+        return command
+    return cmd_method
 
-        if False:
-            x=prj.x
-            y=prj.y+10
-            z=10
-            xs=rand_speed(-4, 4)
-            ys=rand_speed(-1,1)
-            zs=rand_speed(3,10)
+def state_with_weapon(meth):
+    """Decorator to execute cmd only if player's state with weapon."""
+    def cmd_with_weapon(self, event, arg):
+        if self.state in Player.STATES_WITH_WEAPON:
+            meth(self, event, arg)
+    return cmd_with_weapon
 
-            for m in range(2):
-                for apart in ["PingvinPart", "PingvinTorso"]:
-                    i = random.randrange(1, 5)
-                    p = Particle("Blood/Gib/%s%d"%(apart, i),x=x,y=y,z=z,
-                                 x_speed=xs(),
-                                 y_speed=ys(),
-                                 z_speed=zs())
-                    f.add(p)
+def weapon_not_firing(meth):
+    """Decorator to execute cmd only if not firing at the moment."""
+    def cmd_weapon_not_firing(self, event, arg):
+        if self.weapon.state != "Fire":
+            meth(self, event, arg)
+    return cmd_weapon_not_firing
 
-#             for i in range(1, 8):
-#                 p = Particle("Blood/Gib/Part%d"%i,
-#                               x=projectile.x,y=projectile.y+10,z=10,
-#                               x_speed=rand_speed(-4, -1)(),
-#                              y_speed=rand_speed(-0.5,0.5)(),
-#                              z_speed=rand_speed(1,5)())
-#                 f.add(p)
+# Player Commands
+Player.left  = Player.generic_cmd
+Player.right = Player.generic_cmd
+Player.up    = Player.generic_cmd
+Player.down  = Player.generic_cmd
+Player.fire  = Player.generic_cmd
+
+@event_type(KEYDOWN)
+@state_with_weapon
+@weapon_not_firing
+def buy(self, event, arg):
+    self.buy_weapon(arg)
+Player.buy = buy
+
+@event_type(KEYDOWN)
+@state_with_weapon
+def reload(self, event, arg):
+    self.weapon.reload(self.field)
+Player.reload = reload
+
+@event_type(KEYDOWN)
+@state_with_weapon
+@weapon_not_firing
+def switch(self, event, arg):
+    if arg:
+        print "SWITCH", arg
+        self.switch_weapon(self, arg)
+    else:
+        # Switch to next/prev weapon
+        nwidx = self.weapons.index(self.weapon)
+        twpns = len(self.weapons)
+        if nwidx == (twpns-1) and twpns > 1:
+            nwidx -= 1
+        elif nwidx < (twpns-1):
+            nwidx += 1
+        self.switch_weapon(self.weapons[nwidx])
+
+Player.switch = switch
+
+def jump(self, event, arg):
+    if self.state in ['Walking', 'Stopped']:
+        print "arg: %s"%arg
+        z, xc, yc = map(int, islice(chain(arg.split(), repeat('1')), 0, 3))
+        self.jump_zxy(z, xc, yc)
+
+Player.jump = jump
+
+@event_type(KEYDOWN)
+@command
+def say(self, msg):
+    self.say0(msg)
+
+Player.say = say

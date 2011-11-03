@@ -83,7 +83,7 @@ def loop_menu(menu):
         pygame.display.flip()
         for event in pygame.event.get():
             SH_CONSOLE.handle_event(event)
-            if event.type == KEYDOWN:
+            if event.type == KEYUP:
                 menu.handle_event(event)
                 draw_menuscreen()
                 menu.draw()
@@ -138,7 +138,7 @@ class Menu:
         self.done = True
 
     def handle_event(self, event):
-        if event.type == KEYDOWN:
+        if event.type == KEYUP:
             sidx = self.items.index(self.selected)
             if event.key == K_UP:
                 self.selected = self.items[sidx-1]
@@ -287,14 +287,14 @@ class HelpMenu(Menu):
 
     def handle_event(self, event):
         Menu.handle_event(self, event)
-        if event.type == KEYDOWN and event.key == K_RIGHT:
+        if event.type == KEYUP and event.key == K_RIGHT:
             if self.selected == 'Enemies':
                 self.enemy += 1
                 if self.enemy >= len(self.enemies): self.enemy = 0
             elif self.selected == 'Weapons':
                 self.weapon += 1
                 if self.weapon >= len(self.weapons): self.weapon = 0
-        elif event.type == KEYDOWN and event.key == K_LEFT:
+        elif event.type == KEYUP and event.key == K_LEFT:
             if self.selected == 'Enemies':
                 self.enemy -= 1
                 if self.enemy < 0: self.enemy = len(self.enemies)-1
