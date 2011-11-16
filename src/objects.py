@@ -341,8 +341,9 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
         if not _hr:
             return False
         elif prj.is_bullet():
-            debug("%s is_headshot: prj.x/y=%d/%d, rect=%s"%
-                  (repr(self), prj.x, prj.y, repr(_hr)))
+            if 'weapon' in option('debug'):
+                debug("%s is_headshot: prj.x/y=%d/%d, rect=%s"%
+                      (repr(self), prj.x, prj.y, repr(_hr)))
             return _hr.collidepoint(prj.x, prj.y)
 
         # PRJ is flunk rocket or grenade
@@ -628,6 +629,9 @@ class Projectile:
         self.energy = weapon.damage
         self.given_damage = 0
 
+        self.headshots = 0
+        self.niceshot = False
+
     def is_grenade(self):
         """Return True if projectile is grenade or flunk rocket."""
         return isinstance(self, (Grenade, FlunkRocket))
@@ -640,18 +644,33 @@ class Projectile:
         """Hit creature HC by the projectile with base damage DMG."""
         _ishs = hc.is_headshot(self)
         if _ishs:
+            self.player.pstats["weapons"][self.weapon.name]["headshots"] += 1
+            self.headshots += 1
             dmg *= hc.headshot_multiplier
             # Earn bonus money for the headshot accuracy
             self.player.earn_money(hc.headshot_bonus)
 
         dmg += self.weapon.damage_inc * (self.player.field.level.num-1)
         self.given_damage += dmg
+        # Update player's stats
+        self.player.pstats["weapons"][self.weapon.name]["damage"] += dmg
+
         hc.hit(self, dmg, head=_ishs)
 
     def done_hits(self):
         """Projectile done hitting creatures."""
         if self.given_damage > self.weapon.damage*4:
-            self.player.nice_shot(self)
+            if 'weapon' in option('debug'):
+                debug("WPN: huge damage by proj: %d!"%self.given_damage)
+            self.niceshot = True
+            self.player.nice_shot_projectile(self)
+        elif self.weapon.__class__.__name__ == 'AWP' \
+                 and self.headshots > 1:
+            # Double headshot from AWP is a nice shot!
+            if 'weapon' in option('debug'):
+                debug("WPN: %d headshots from AWP!"%self.headshots)
+            self.niceshot = True
+            self.player.nice_shot(self.headshots)
 
 class Grenade(Projectile, AnimateObj):
     def __init__(self, weapon, **kwargs):
@@ -740,7 +759,8 @@ if bullet collides CREATURE."""
             sy = self.bully(sx)
             if _cr.collidepoint(sx, sy) and cm.get_at((sx-xoff,sy-yoff)):
                 return (creature, (sx,sy))
-            sx -= 1 
+            # Step by 2 pixels to speed things up a little
+            sx -= 2
         return False
 
     def apply_hits(self, creatures):
@@ -876,7 +896,7 @@ class BloodParticle(MovingObj):
         kwargs.update(keep_last=True)
         MovingObj.__init__(self, **kwargs)
 
-#        self.drip_sounds = map(load_sound, aglob("misc/drip*.wav"))
+        self.drip_sounds = map(load_sound, aglob("misc/drip*.wav"))
 
         # can't slide and bounce
         self.x_fric = self.y_fric = 100
@@ -888,9 +908,27 @@ class BloodParticle(MovingObj):
     def tick(self, f):
         MovingObj.tick(self, f)
         if self.is_quiescent():
-#            play_rnd_sound(self.drip_sounds)
+            if option('blood-sound'):
+                play_rnd_sound(self.drip_sounds)
+
             _ss = self.scs
             f.draw_blood(_ss.image, _ss.rect.x, _ss.rect.y)
+
+class SparkParticle(MovingObj):
+    def __init__(self, w, h, **kwargs):
+        MovingObj.__init__(self, **kwargs)
+        self.ticks = 0
+
+        self.scs.image = gen_blood(2, 2, color="yellow")
+        self.scs._layer = TOP_LAYER
+        move_sprite(self.scs, self.x, self.y)
+
+    def tick(self, f):
+        self.ticks += 1
+        if self.ticks == FPS/2:
+            f.remove(self)
+            return
+        MovingObj.tick(self, f)
 
 class ObjectsGroup(pygame.sprite.DirtySprite):
     def __init__(self, **kwargs):

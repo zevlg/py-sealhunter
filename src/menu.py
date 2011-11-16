@@ -89,10 +89,11 @@ def loop_menu(menu):
                 menu.draw()
 
 # exported
-def do_mainmenu():
+def do_mainmenu(console=None):
     # Global console
     global SH_CONSOLE
-    SH_CONSOLE = sealhunter.setup_console()
+    if not SH_CONSOLE:
+        SH_CONSOLE = console or sealhunter.setup_console()
 
     loop_menu(MainMenu())
 
@@ -172,10 +173,22 @@ class MainMenu(Menu):
     def help(self):
         loop_menu(HelpMenu())
 
+    def draw(self):
+        Menu.draw(self)
+
+        if self.selected == 'Options':
+            drawPane(100, 280, 260, 110)
+            drawText(110, 300, """Use quake console
+To setup options
+Press "~" to popup console""")
+        elif self.selected == "Stats":
+            drawPane(100, 280, 205, 60)
+            drawText(110, 290, "TODO", (150,0,0))
+            drawText(110, 310, """Sorry, no stats yet.""")
+
 class SinglePlayerMenu(Menu):
     def __init__(self, menu):
-        epls = filter(lambda p: p.has_key("enabled") and p["enabled"],
-                      option("players"))
+        epls = filter(lambda p: p.get("enabled", False), option("players"))
         Menu.__init__(self, "--Select a player--",
                       [(p["name"], self.chooseplayer) for p in epls])
         self.acolor = SUBMENU_ACOLOR
@@ -210,7 +223,8 @@ class NewGameMenu(Menu):
         self.done = True
 
     def multi(self):
-        pnames = map(lambda p: p["name"], option("players"))
+        pnames = [p["name"] for p in option("players")
+                  if p.get("enabled", False)]
         sealhunter.new_game(pnames, SH_CONSOLE)
         self.done = True
 

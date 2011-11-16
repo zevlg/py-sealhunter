@@ -99,8 +99,8 @@ def options():
 
 def debug(str):
     if option("debug"):
-        import sys
-        sys.stderr.write(str+"\n")
+        sys.stderr.write(str)
+        sys.stderr.write("\n")
 
 def move_sprite(sprite, x, y):
     """Move SPRITE to X,Y position."""
@@ -124,6 +124,7 @@ def dirty_sprite():
     return ds
 
 def play_sound(snd, stop=False, **kwargs):
+    """Play sound SND."""
     if type(snd) == str:
         return play_sound(load_sound(snd), stop, **kwargs)
 
@@ -131,22 +132,33 @@ def play_sound(snd, stop=False, **kwargs):
         if stop: snd.stop()
         _sc = snd.play(**kwargs)
         if _sc: _sc.set_volume(option("volume"))
+        if kwargs.has_key("fadeout"):
+            _sc.fadeout(kwargs['fadeout'])
         return _sc
 
 def play_rnd_sound(sounds):
+    """Play random sound from SOUNDS."""
     if sounds:
         play_sound(choice(sounds))
 
-def gen_blood(w, h):
+def gen_blood(w, h, color="red"):
+    """Random red pixels scaled to WxH.
+Intended to emulate blood."""
     # TODO: probably introduce some kind of blood particles cache
-    bs = pygame.Surface((2*w,2*h)).convert_alpha()
-    bs.fill((255,255,255,0))
+    bs = pygame.Surface((2*w,2*h))
+    CKEY = (255,255,255)
+    bs.set_colorkey(CKEY)
+    bs.fill(CKEY)
     rr = randint(0,60)
-    pygame.gfxdraw.filled_ellipse(bs, w, h, w, h,
-                                  pygame.Color(140+rr,rr/2,rr/2,255))
-    return pygame.transform.smoothscale(bs, (w, h))
+    if color == "yellow":
+        bc = pygame.Color(140+rr,140+rr,rr/2,255)
+    else:
+        bc = pygame.Color(140+rr,rr/2,rr/2,255)
+    pygame.gfxdraw.filled_ellipse(bs,w,h,w,h,bc)
+    return pygame.transform.smoothscale(bs, (w, h)).convert()
 
 def key2keycode(key):
+    """Convert KEY string to pygame constant."""
     from pygame import constants as pyconsts
     # key in form 'up' 'a', etc
     # 1. Try K_<KEY>

@@ -109,7 +109,7 @@ class Enemy(AnimateStates, Creature):
         def pcollides(player):
             return self.rect.collidepoint(player.rect.center)
 
-        for pp in filter(pcollides, f.players()):
+        for pp in filter(pcollides, f.players):
             # Start pushing the player
             pp.state_start("Sitting")
             pp.x_speed = (pp.x_speed+self.x_speed)/3.0
@@ -480,10 +480,6 @@ class Aktivist(Enemy, WithYSpeed):
                                   x=self.x+5,y=self.y,z=20))
 
     def hit(self, prj, damage, head=False):
-##        if not self.is_alive():
-##            self.life = -1000
-##            self.die(prj)
-##            return
         has_fp = hasattr(self, "fatal_projectile")
         Enemy.hit(self, prj, damage, head=head)
 
@@ -600,9 +596,16 @@ class Vits(Enemy):
         if self.state == "Walking" and \
                self.state_ticks - randint(0,500) == 150:
             self.nosa()
+        elif self.isboss and self.state_ticks % 100 == 99 \
+                 and choice(range(3)) == 1:
+            self.nosa()
 
     def die(self, prj):
         Creature.die(self, prj)
+
+        if self.isboss:
+            # GIB for the boss
+            self.life = -10*self.slife
 
         self.x_speed = 0
         if self.life < -5*self.slife:
@@ -804,7 +807,7 @@ class Bear(Enemy):
 
     def press_players(self, f):
         # Bear can butt the player or make him sit
-        players = f.players()
+        players = f.players
         pix = self.rect.collidelistall(map(lambda p: p.rect, players))
         pixp = [players[pi] for pi in pix]
         _bh = self.rect.h
@@ -939,6 +942,8 @@ If HEAD is True, then creature has been headshoted."""
 
 class Valross(Enemy):
     __metaclass__ = MetaEnemy
+    NORMAL = 1
+    FLIPPED = -1
     def __init__(self, **kwargs):
         ss = {
             "Walking": {
@@ -948,13 +953,109 @@ class Valross(Enemy):
             2:[(0,37),(26,0),(46,15)],
             3:[(0,37),(31,0),(51,15)]},
 
-            "Death1": {
+            "Death": {
             0:(0,37), 1:(0,37), 2:(0,37),
             3:(0,37), 4:(2,37), 5:(2,37),
             6:(2,37), 7:(2,37), 8:(2,37),
             9:(2,37), 10:(9,32), 11:(9,26),
             12:(8,18), 13:(8,18), 14:(8,18),
-            15:(9,18), 16:(8,18)}
+            15:(9,18), 16:(8,18)},
+
+            "Charge": {0:[(0,32),(42,0),(64,18)]},
+            "Rush":{0:[(0,37),(27,0),(52,19)]}
             }
-        #TODO
+        Enemy.__init__(self, ss, **kwargs)
+
+        self.orient = Valross.NORMAL
+        # spawn sound
+        play_rnd_sound(aglob("valross/morr*.wav"))
+#        self.x_speed = self.speed_range[0]
+
+    def die(self, prj):
+        Creature.die(self, prj)
+        self.state_start("Death")
+        play_sound("valross/death1.wav")
+
+    def hit(self, prj, damage, head=True):
+        if damage > 50:
+            play_rnd_sound(aglob("valross/hit*.wav"))
+        Enemy.hit(self, prj, damage, head)
+
+    def tick(self, f):
+        # Can't use Enemy.tick() directly because of check for
+        # FLIMIT_WIDTH
+        Creature.tick(self, f)
+        if self.is_alive():
+            self.apply_speed()
+            debug("Valross: x=%d (lim=%d)"%(self.x, FLIMIT_WIDTH[1]))
+            if self.x > FLIMIT_WIDTH[1]:
+                # flip the valross
+                debug("Valross: NEED FLIP")
+                self.orient = Valross.FLIPPED
+                self.x_speed = self.speed_range[0]
+                self.state_start("Walking")
+            elif self.x < 0:
+                debug("Valross: NEED FLIP")
+                self.orient = Valross.NORMAL
+                self.x_speed = self.speed_range[0]
+                self.state_start("Walking")
+        else:
+            self.apply_motion()
+            if self.is_quiescent() \
+                   and self.state_idx == self.state_frames()-1:
+                # Dead, quiescent and all frames are show
+                f.remove(self)
+                f.draw_static(self.image, self.rect.x, self.rect.y)
+
+        AnimateStates.tick(self, f)
+        self.press_players(f)
+
+        self.apply_position()
+        self.update_reflection()
+
+        if self.state == "Walking":
+            if (self.orient == Valross.NORMAL and self.x > 100) \
+               or (self.orient == Valross.FLIPPED \
+                   and self.x < FLIMIT_WIDTH[1]-100):
+                self.state_start("Charge")
+                play_sound("valross/charge.wav")
+            elif self.state_idx == 1:
+                self.x += self.orient*3.0/self.ticks_step
+            elif self.state_idx == 2:
+                self.x += self.orient*5.0/self.ticks_step
+        elif self.state == "Charge":
+            if self.state_ticks == int(1.2*FPS):
+                self.state_start("Rush")
+                # XXX
+                self.x_speed = 12
+            else:
+                # Drop some sparks from the front
+                _xrs = apply(rand_speed, sorted((-self.orient*4, -self.orient*2)))
+                _zrs = apply(rand_speed, (2, 3))
+                bps = [SparkParticle(randint(1,4), randint(1,4),
+                                     x_speed=_xrs(),z_speed=_zrs(),
+                                     x=self.x+randint(46,50),
+                                     y=self.y+randint(2,6), z=0)
+                       for _ in range(3)]
+                self.field.add(bps)
+##class Valross(Enemy):
+##    __metaclass__ = MetaEnemy
+##    def __init__(self, **kwargs):
+##        ss = {
+##            "Walking": {
+##            "ticks_step": 3,
+##            0:[(0,37),(33,0),(54,15)],
+##            1:[(0,37),(30,0),(51,15)],
+##            2:[(0,37),(26,0),(46,15)],
+##            3:[(0,37),(31,0),(51,15)]},
+
+##            "Death1": {
+##            0:(0,37), 1:(0,37), 2:(0,37),
+##            3:(0,37), 4:(2,37), 5:(2,37),
+##            6:(2,37), 7:(2,37), 8:(2,37),
+##            9:(2,37), 10:(9,32), 11:(9,26),
+##            12:(8,18), 13:(8,18), 14:(8,18),
+##            15:(9,18), 16:(8,18)}
+##            }
+##        #TODO
 

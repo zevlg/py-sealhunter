@@ -41,7 +41,7 @@ EARNMONEY_FONT_SIZE = 10
 
 PAUSE_KEYS = [K_p, K_BREAK, K_PAUSE]
 
-CONSOLE_KEYS = [K_F1, K_BACKQUOTE, K_RIGHTBRACKET]
+CONSOLE_KEYS = [K_F1, K_BACKQUOTE]
 CONSOLE_HEIGHT = 300
 CONSOLE_FONT_SIZE = 14
 CONSOLE_BG_ALPHA = 220
@@ -183,6 +183,7 @@ WEAPONS = {"Pistol": {"price": 0,
            }
 
 ENEMIES = {"Bruns":
+           # life = (base, n) = BASE + N * level_num
            dict(life=(26, 21), ticks_step=3,
                 speed_range=(0.5, 1.1),
                 bounty=50, headshot_bonus=10,
@@ -222,10 +223,13 @@ ENEMIES = {"Bruns":
 
            # TODO: valross yet has invalid values
            "Valross":
-           dict(life=(10000, 0), boss_life=10000,
-                ticks_step=1, speed_range=(0.3, 8),
-                can_press=True, bounty=50000,
-                headshot_multiplier=2)
+           dict(life=(0,0), boss_life=15000,
+                ticks_step=7, speed_range=(0.25, 0.25),
+                headshot_multiplier=1.25)
+##           dict(life=(10000, 0), boss_life=10000,
+##                ticks_step=1, speed_range=(0.3, 8),
+##                can_press=True, bounty=50000,
+##                headshot_multiplier=2)
            }
 
 # Not yet used
@@ -316,6 +320,7 @@ DEFAULT_OPTIONS = {"reflections": ["player", "enemies", "weapon",
                    # Sounds settings
                    "sound": True,
                    "volume": 0.5,       # 0.0 - 1.0
+                   "blood-sound": False,
 
                    # Music settings
                    "music": False,
@@ -326,7 +331,8 @@ DEFAULT_OPTIONS = {"reflections": ["player", "enemies", "weapon",
                    "show": ["fps", "clips", "shells", "bullets"],
 
                    # Misc
-                   "max-messages": 4,
+                   "messages-speed": 150, # 3 seconds to show
+                   "max-messages": 10,
 
                    # Fun options
                    "bloody": 5,         # bloody level

@@ -1,4 +1,6 @@
-# Copyright (C) 2009-2010 by Zajcev Evegny <zevlg@yandex.ru>
+# Copyright (C) 2009-2011 by Zajcev Evegny <zevlg@yandex.ru>
+
+from operator import methodcaller as method
 
 import pygame
 from pygame.sprite import LayeredDirty
@@ -10,13 +12,17 @@ from constants import *
 from misc import *
 
 class Field(LayeredDirty):
-    def __init__(self, nplayers):
-        self.nplayers = nplayers
+    def __init__(self, console=None):
+        self.console = console
+        self.players = []               # players on the field
         self.objects = []               # objects on the field
+        self.deleted = []               # object to delete
+
         LayeredDirty.__init__(self, _update=True, _time_threshold=1000.0/FPS)
         self.game_over = False
         self.screen = pygame.display.get_surface()
 
+        self.lockfps = FPS
         self.clock = pygame.time.Clock()
 
         self.bg = load_texture("Misc/backdrop.png")
@@ -29,13 +35,15 @@ class Field(LayeredDirty):
         self.ticks = 0                  # total ticks field played
 
         self.screen.blit(self.field, (0,0))
+        # System font, for messages and FPS
+        self.sfont = load_font("default.ttf", 14)
+
         # FPS drawer if needed
         if "fps" in option("show"):
-            self.sfont = load_font("default.ttf", 14)
-            self.fps = pygame.sprite.DirtySprite()
-            self.update_fps()
+            self.fpsprite = pygame.sprite.DirtySprite()
+            self.update_fpsprite()
             # show FPS rate on top of everything
-            self.add(self.fps, layer=TOP_LAYER*3)
+            self.add(self.fpsprite, layer=TOP_LAYER*3)
 
         # Messages
         self.messages = []
@@ -45,15 +53,10 @@ class Field(LayeredDirty):
         self.msgs.visible = 0
         self.msgs_offset = 0
         self.msgs_linesize = self.sfont.get_linesize()
-        _ssh = self.msgs_linesize*option("max-messages")
+        _ssh = self.msgs_linesize * option("max-messages")
         self.msgs.image = pygame.Surface((640, _ssh))
         move_sprite(self.msgs, 0, 71)
         self.add(self.msgs, layer=-1)
-
-        # Levels
-        self.levels = iter([Level1(self), Level2(self),
-                            Level3(self), Level4(self),
-                            Level5(self)])
 
         # Sprite for level's progress
         self.lp_font = load_font('trebuc.ttf', 14)
@@ -64,26 +67,6 @@ class Field(LayeredDirty):
         move_sprite(self.level_prgrs, 0, 0)
         self.level_prgrs.image.blit(self.bg, (0,0), self.level_prgrs.rect)
         self.add(self.level_prgrs)
-
-        # Start 1st level
-        self.next_level()
-
-    def next_level(self):
-        self.level = self.levels.next()
-
-        # - Remove old splash if any
-        for o in self.objects:
-            if o.__class__ == LevelSplash:
-                self.remove(o)
-                break
-
-        # NOTE: LevelSplash will call start_level after fading out
-        self.add(LevelSplash(self.level.num, self))
-#        self.level_prgrs._visible = True
-
-    def start_level(self):
-        self.level.start()
-#        self.level_prgrs._visible = True
 
     def render_level_progress(self):
         # Render level's progress bar
@@ -106,20 +89,20 @@ class Field(LayeredDirty):
                 pygame.draw.rect(_slpi, _ccol, (9+_lsw, 4, _cw, 15))
             self.level_prgrs.dirty = 1
 
-    def update_fps(self):
+    def update_fpsprite(self):
         ft = "FPS: %d, Objects: %d"% \
              (round(self.clock.get_fps()), len(self.objects))
-        self.fps.image = self.sfont.render(ft, True, (0,0,0))
-        move_sprite(self.fps, 0, 480-14)
+        self.fpsprite.image = self.sfont.render(ft, True, (0,0,0))
+        move_sprite(self.fpsprite, 0, 480-14)
 
     def add(self, *args, **kwargs):
         """Add object O to field object list."""
         LayeredDirty.add(self, *args, **kwargs)
 
+        # Append object in-place, even if ticking
         for o in args:
             if hasattr(o, "tick"):
                 self.objects.append(o)
-#        self.objects.extend(args)
 
 ##        if kwargs.get("append", False):
 ##            self.objects.extend(args)
@@ -130,41 +113,48 @@ class Field(LayeredDirty):
         """Remove object O from field's object list."""
         LayeredDirty.remove(self, *args)
 
-        # remove from ticking objects as well
-        for o in args:
-            if o in self.objects:
-                self.objects.remove(o)
-#        map(self.objects.remove, args)
+        # Mark as deleted, so object will be deleted on next tick
+        self.deleted.extend(args)
+
+    def has_object(self, o):
+        return o in self.objects
 
     def tick(self):
-        def redraw_screen():
-            self.clear(self.screen, self.field)
-            urects = self.draw(self.screen)
-            pygame.display.update(urects)
-
+        # 0. Tick the field
         self.ticks += 1
 
-        # Tick the level
+        # 1. Tick the level
         if self.level.finished:
-            self.next_level()
+            if self.level.num == 6:
+                pass
+##                self.game_over = True       # avoid debugging
+##                self.game_is_over(None)
+##                return
+            else:
+                self.run_level(self.level.num + 1)
+
         if self.level.started:
             self.level.tick(self)
         self.render_level_progress()
 
-        def tick_object(o):
-            o.tick(self)
+        # 2. Tick all ticking objects
+        for to in self.objects:
+            to.tick(self)
 
-        map(tick_object, self.objects)
-##        for o in self.objects:
-##            if hasattr(o, "tick"):
-##                o.tick(self)
+        # 3. Remove deleted (while ticking) objects
+        for do in self.deleted:
+            if do in self.objects:
+                self.objects.remove(do)
+        self.deleted = []
 
-        # Draw FPS
-        if "fps" in option("show"): self.update_fps()
+        # 4. Draw FPS
+        if "fps" in option("show"):
+            self.update_fpsprite()
 
-        # Scroll the messages
-        if self.show_messages and self.ticks - self.msg_ticks > 150:
-            _msgst = (self.ticks - self.msg_ticks) % 150
+        # 5. Scroll the messages
+        if self.show_messages \
+               and self.ticks - self.msg_ticks > option("messages-speed"):
+            _msgst = (self.ticks - self.msg_ticks) % option("messages-speed")
             if _msgst <= self.msgs_linesize:
                 if _msgst == self.msgs_linesize:
                     self.show_messages = self.show_messages[1:]
@@ -173,16 +163,18 @@ class Field(LayeredDirty):
                     self.msgs_offset -= 1
                 self.update_messages()
 
-        redraw_screen()
+        # 6. Redraw the screen
+        self.clear(self.screen, self.field)
+        urects = self.draw(self.screen)
+        pygame.display.update(urects)
 
-        # Lock the frame rate
-        if ENABLE_ACCURATE_FPS: self.clock.tick_busy_loop(FPS)
-        else: self.clock.tick(FPS)
+        # 7. Lock the frame rate
+        if ENABLE_ACCURATE_FPS:
+            self.clock.tick_busy_loop(self.lockfps)
+        else:
+            self.clock.tick(self.lockfps)
 
-##        print
-##        obs = filter(lambda o: o.__class__.__name__!="DirtySprite", self.objects)
-##        print len(obs)
-##        print obs
+        # DONE
 
     def draw_field(self, surf, x, y):
 #        return
@@ -260,6 +252,19 @@ class Field(LayeredDirty):
         return self.creatures(Player, all=True)
 
     def game_is_over(self, by_enemy):
+        # Update players stats
+        for p in self.players:
+            p.pstats["time"] = 1.0*self.ticks/FPS
+            if by_enemy:
+                p.pstats["game-over-by"] = by_enemy.__class__.__name__
+            _lvl = self.level
+            _lvl_done = 100.0*_lvl.ticks/_lvl.level_ticks
+            p.pstats["progress"] = (_lvl.num, _lvl_done)
+            # Update the time in seconds, weapons has been used
+            wpnstats = p.pstats["weapons"]
+            for w in p.weapons:
+                wpnstats[w.name]["time"] = 1.0*w.usage_ticks/FPS
+
         if option("debug"):
             return
         self.game_over = True
@@ -291,3 +296,40 @@ class Field(LayeredDirty):
             self.msg_ticks = self.ticks
         self.show_messages.append(msg)
         self.update_messages()
+
+    def handle_event(self, event):
+        """Handle EVENT on the field."""
+        if 'field' in option('debug') and event.type in [KEYDOWN, KEYUP]:
+            debug("Key %s %s"%(event.type, event.key))
+
+        if event.type == QUIT or \
+               (event.type == KEYUP and event.key == K_ESCAPE):
+            self.game_is_over(None)
+            return
+
+        self.console.handle_event(event)
+        for p in self.players:
+            p.handle_event(event)
+
+    def run_level(self, n):
+        """Run the level number N."""
+        # - Remove old splash if any
+        for o in self.objects:
+            if isinstance(o, LevelSplash):
+                self.remove(o)
+
+        self.players = self.creatures(Player, all=True)
+        self.level = new_level(self, n)
+
+    def run(self):
+        """Run the field untli game is over."""
+        self.run_level(1)
+
+        while not self.game_over:
+            for pyev in pygame.event.get():
+                self.handle_event(pyev)
+
+            self.tick()
+
+        # XXX Stop all sounds
+        pygame.mixer.stop()

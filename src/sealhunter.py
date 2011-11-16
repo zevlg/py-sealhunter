@@ -1,6 +1,6 @@
-# Copyright (C) 2009 by Zajcev Evegny <zevlg@yandex.ru>
+# Copyright (C) 2009-2011 by Zajcev Evegny <zevlg@yandex.ru>
 
-__version__ = "0.1"
+__version__ = "0.2"
 __author__ = "Zajcev Evgeny <zevlg@yandex.ru>"
 
 import pygame
@@ -9,8 +9,6 @@ from pygame.locals import *
 import menu, field, console, levels, player, hud
 from misc import *
 from constants import *
-
-from enemies import Aktivist
 
 def start_sealhunter(config=None):
     options_load()
@@ -24,21 +22,21 @@ def start_sealhunter(config=None):
     vflags = HWSURFACE | DOUBLEBUF
     if option("fullscreen"):
         vflags |= FULLSCREEN
-#    else: vflags = HWSURFACE|DOUBLEBUF
     pygame.display.set_mode((640, 480), vflags)
     pygame.display.set_caption('SealHunter v%s'%__version__)
     pygame.mouse.set_visible(0)
 
+    # Exec the given config
     cons = None
     if config:
         cons = setup_console()
         cons.send_command("exec %s"%config)
 
-    new_game(["Clark Kent", "Peter Parker"], cons)
+#    new_game(["Clark Kent", "Peter Parker"], cons)
 #    return
 
     menu.menu_init()
-    menu.do_mainmenu()
+    menu.do_mainmenu(cons)
     return
 
     options_save()
@@ -53,55 +51,73 @@ def new_game(players_names, cons=None):
     """Start game for PLAYERS."""
     hud.huds_reset()
 
-    players = filter(lambda p: p["name"] in players_names, option("players"))
-    # Field to play on
-    fld = field.Field(len(players))
+    # Setup sealhunter console
+    shcons = cons or setup_console()
+    fld = field.Field(shcons)
+    shcons.locals['f'] = fld
 
     def make_player(profile):
         return player.Player(profile, field=fld)
+    def good_player(p):
+        return p["name"] in players_names
+    fld.add(*map(make_player, filter(good_player, option("players"))))
 
-    # Create players
-    players = map(make_player, players)
-    # Start players on the field
-    map(fld.add, players)
+    # Start the game
+    fld.run()
 
-    # Setup sealhunter console
-    shcons = cons or setup_console()
-    shcons.locals['f'] = fld
+    # print players stats
+    for p in fld.players:
+        p.print_pstats()
 
-    fld.console = shcons
+##    players = filter(lambda p: p["name"] in players_names, option("players"))
+##    # Field to play on
+##    fld = field.Field(len(players))
 
-    # xXX
-#    ak = Aktivist(x=-15, y=250, field=fld)
-#    fld.add(ak)
+##    def make_player(profile):
+##        return player.Player(profile, field=fld)
 
-    players[0].earn_money(100000)
-    players[0].apply_earned_money()
+##    # Create players
+##    players = map(make_player, players)
+##    # Start players on the field
+##    map(fld.add, players)
 
-    # optimization, player handles down/up, so no repeating
-    pygame.key.set_repeat()
+##    # Setup sealhunter console
+##    shcons = cons or setup_console()
+##    shcons.locals['f'] = fld
 
-    while not fld.game_over:
-        kevents = pygame.event.get()
-        for event in kevents:
-            if event.type == QUIT or \
-                   (event.type == KEYUP and event.key == K_ESCAPE):
-                debug("Final FPS: %f"%fld.clock.get_fps())
-                return
+##    fld.console = shcons
 
-            if 'keys' in option("debug") and event.type == KEYDOWN:
-                debug("Keys: KeyDown: %d/%s"
-                      %(event.key, pygame.key.name(event.key)))
+##    # xXX
+###    ak = Aktivist(x=-15, y=250, field=fld)
+###    fld.add(ak)
 
-            # Maybe console event
-            # NOTE: Use console to pause games
-            shcons.handle_event(event)
+##    players[0].earn_money(100000)
+##    players[0].apply_earned_money()
 
-            # Player event ?
-            for p in players:
-                p.handle_event(event)
+##    # optimization, player handles down/up, so no repeating
+##    pygame.key.set_repeat()
 
-        fld.tick()
+##    while not fld.game_over:
+##        kevents = pygame.event.get()
+##        for event in kevents:
+##            if event.type == QUIT or \
+##                   (event.type == KEYUP and event.key == K_ESCAPE):
+##                debug("Final FPS: %f"%fld.clock.get_fps())
+##                return
 
-    # Stop all sounds
-#    pygame.mixer.stop()
+##            if 'keys' in option("debug") and event.type == KEYDOWN:
+##                debug("Keys: KeyDown: %d/%s"
+##                      %(event.key, pygame.key.name(event.key)))
+
+##            # Maybe console event
+##            # NOTE: Use console to pause games
+##            shcons.handle_event(event)
+
+##            # Player event ?
+##            for p in players:
+##                p.handle_event(event)
+
+##        fld.tick()
+
+##    # Stop all sounds
+###    pygame.mixer.stop()

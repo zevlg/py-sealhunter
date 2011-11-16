@@ -1,5 +1,7 @@
 # Copyright (C) 2009-2010 by Zajcev Evegny <zevlg@yandex.ru>
 
+from operator import methodcaller as method
+
 import pygame, random
 from pygame.locals import *
 
@@ -10,7 +12,7 @@ class MetaWeapon(type):
     def __init__(cls, name, bases, dict):
         type.__init__(cls, name, bases, dict)
 
-        setobjattrs(cls, WEAPONS[name],
+        setobjattrs(cls, WEAPONS[name], name=name,
                     price=0, wpn_position=(0,8),
                     aim_position=4, cross_xoffset=40,
                     accuracy_angle=0, bullets_per_shot=1,
@@ -51,6 +53,7 @@ class Weapon(pygame.sprite.Group, WithReflection):
         self.player = player
         self.state = 'Idle'
         self.ticks = self.fire_state = self.reload_state = 0
+        self.usage_ticks = 0
 
         self.x, self.y = self.wpn_position
         self.bullets = self.clip_size
@@ -75,8 +78,9 @@ class Weapon(pygame.sprite.Group, WithReflection):
         return substitute_color(load_texture(w).copy(), PLAYER_SCOLOR,
                                 self.player.profile["skin"])
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         self.ticks += 1
+        self.usage_ticks += 1
 
         if self.state == 'Fire' and self.ticks >= self.fire_ticks:
             self.state = 'Idle'
@@ -138,7 +142,8 @@ class Weapon(pygame.sprite.Group, WithReflection):
             if hasattr(self, "shell_attrs"):
                 for k in self.shell_attrs:
                     v = self.shell_attrs[k]
-                    if type(v) == type(lambda x: x): v = v()
+                    if type(v) == type(lambda x: x):
+                        v = v()
                     setattr(sh, k, v)
 
             sh.x += self.player.x
@@ -153,16 +158,50 @@ class Weapon(pygame.sprite.Group, WithReflection):
 
     def throw_bullets(self, f):
         """Throw bullets to all the creatures."""
-        _crts = f.creatures()
-        map(lambda b: b.apply_hits(_crts),
-            (Bullet(self, f) for _ in xrange(self.bullets_per_shot)))
+        # NOTE:
+        #   all bullets have the same .fx and .fy at start
+        #   but may have different angles
+
+        # 1. Create a rectangle that occupy all bullets
+        # 2. Find creatures that collides with that rectangle
+        # 3. Calculate precise hitpoints
+        _bullets = [Bullet(self, f) for _ in xrange(self.bullets_per_shot)]
+        _bullys = map(lambda x: x.bully(0), _bullets)
+        _ymin, _ymax = min(_bullys), max(_bullys)
+        _brect = pygame.Rect(0, _ymin, _bullets[0].fx, _ymax - _ymin)
+        _crts = filter(lambda x: _brect.colliderect(x.rect), f.creatures())
+##        _ocrts = f.creatures()
+##        _ocris = _brect.collidelistall(map(lambda c: c.rect, _ocrts))
+##        _crts = [_ocrts[i] for i in _ocris]
+
+        if 'weapon' in option("debug"):
+            debug("WPN: CREATURES to hit: %s"%_crts)
+
+        # Apply bullet hits if any
+        already_niceshot = False
+        for bul in _bullets:
+            bul.apply_hits(_crts)
+            if bul.niceshot:
+                already_niceshot = True
+
         # Earn money for killed creatures
-        map(lambda cr: self.player.earn_money(cr.bounty),
-            filter(lambda cr: not cr.is_alive(), _crts))
+        _deadcrts = filter(lambda c: not c.is_alive(), _crts)
+        for cr in _deadcrts:
+            self.player.earn_money(cr.bounty)
+
         self.player.apply_earned_money()
+
+        # 3 or more kills at once is a nice shot!
+        if not already_niceshot and len(_deadcrts) > 3:
+            if 'weapon' in option('debug'):
+                debug("WPN: %d kills by single shot!"%len(_deadcrts))
+            self.player.nice_shot(len(_deadcrts)-2)
 
     def fire(self, f):
         if not self.can_fire(): return False
+
+        if 'weapon' in option('debug'):
+            debug("WPN: %s Fire"%self)
 
         self.state = 'Fire'
         self.bullets -= 1
@@ -222,12 +261,12 @@ class Pistol(Weapon):
         Weapon.__init__(self, *args)
         self.clip = self.shell = "Small"
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks == 0: self.x -= 1; self.y += 1
             elif self.ticks == 2: self.x += 1; self.y -= 1
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
 class Magnum(Weapon):
     __metaclass__ = MetaWeapon
@@ -240,7 +279,7 @@ class Magnum(Weapon):
 
         self.s_reload = pygame.transform.rotate(self.s_fire[1], 90)
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks == 0:
                 self.scs.image = self.s_fire[0]
@@ -260,7 +299,7 @@ class Magnum(Weapon):
                 self.scs.image = self.s_weapon
                 self.x, self.y = self.wpn_position
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
         if self.state == 'Reload':
             if self.ticks < 2:
@@ -285,7 +324,7 @@ class MP5(Weapon):
         self.shell = "Small"
         self.shell_attrs = {"x_speed": rand_speed(2,2.5)}
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks == 0:
                 self.scs.image = self.s_fire[0]
@@ -299,7 +338,7 @@ class MP5(Weapon):
             elif self.ticks == self.fire_ticks-1:
                 self.x, self.y = self.wpn_position
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
 class Grenades(Weapon):
     __metaclass__ = MetaWeapon
@@ -308,7 +347,7 @@ class Grenades(Weapon):
         self.splash_radius = 95
         self.s_fire.append(self.s_weapon)
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             self.scs.image = self.s_fire[self.ticks/2]
             if self.ticks < 4:
@@ -325,7 +364,7 @@ class Grenades(Weapon):
         else:
             self.x, self.y = self.wpn_position
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
     def throw_bullets(self, f):
         # Grenade is not a bullet
@@ -340,7 +379,7 @@ class Shotgun(Weapon):
                             "x_speed": rand_speed(2,2.67),
                             "z_speed": rand_speed(2,3)}
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks == 3:
                 self.scs.image = self.s_fire[0]
@@ -354,7 +393,7 @@ class Shotgun(Weapon):
                 self.scs.image = self.s_weapon
                 self.x, self.y = self.wpn_position
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
         if self.state == 'Reload':
             if self.ticks % 20 == 0:
@@ -400,11 +439,11 @@ class Flunk(Weapon):
         self.a_reload_grenade = self.a_reload[1]
         del self.a_reload[1]
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             self.scs.image = self.s_fire[self.ticks/2]
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
         if self.state == 'Reload' and self.ticks % 30 == 0:
             play_sound(self.a_reload_grenade, True)
@@ -425,7 +464,7 @@ class M4(Weapon):
         self.shell = "Normal"
         self.shell_attrs = {"x_speed": rand_speed(2,2.5)}
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks == 0:
                 self.scs.image = self.s_fire[0]
@@ -441,7 +480,7 @@ class M4(Weapon):
             self.scs.image = self.s_weapon
             self.x, self.y = self.wpn_position
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
 class AWP(Weapon):
     __metaclass__ = MetaWeapon
@@ -466,8 +505,8 @@ class AWP(Weapon):
         self.sight.image = wwsight
         self.add(self.sight)
 
-    def tick(self, f):
-        Weapon.tick(self, f)
+    def weapon_tick(self, f):
+        Weapon.weapon_tick(self, f)
 
         if self.state in ['Fire', 'Reload']:
             move_sprite(self.sight, -100, -100)
@@ -492,7 +531,7 @@ class VintageShotgun(Weapon):
                           tglob("Weapons/Hands/Farfar/reload_*.png"))
         self.a_load = map(load_sound, aglob("weapons/9/load*.wav"))
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state == 'Fire':
             if self.ticks < 30:
                 if self.ticks == 0:
@@ -526,7 +565,7 @@ class VintageShotgun(Weapon):
                 # Finally throw the bullets
                 self.throw_bullets(f)
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
 
     def fire(self, f):
         if not self.can_fire(): return False
@@ -574,12 +613,13 @@ INC can be negative in order to decrease heating."""
             self.a_fire[si].stop()
             self.a_fire_playing.remove(si)
 
-    def tick(self, f):
+    def weapon_tick(self, f):
         if self.state in ['Idle', 'Reload']:
             self.x, self.y = self.wpn_position
 
             # stop fire sounds
-            for si in range(len(self.a_fire)): self.stop_fire(si)
+            for si in range(len(self.a_fire)):
+                self.stop_fire(si)
 
             if self.ticks == 0 and self.heatidx == 20:
                 play_sound(self.a_winddown)
@@ -609,5 +649,5 @@ INC can be negative in order to decrease heating."""
                 while self.bullets > 0:
                     self.player.tick(f)
 
-        Weapon.tick(self, f)
+        Weapon.weapon_tick(self, f)
         self.scs.image = self.s_fire[self.heatidx]

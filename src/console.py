@@ -48,10 +48,9 @@ def windowed(c):
 def bind(c, arg):
     """/bind <player> <key> <command> - Bind <key> to execute <command>
        Built-in commands: left, right, up, down, fire, reload, buy, switch"""
-    sarg = arg.split()
-    pidx = int(sarg[0])
-    kcode = key2keycode(sarg[1])
-    cmd = " ".join(sarg[2:])
+    sarg = arg.split(" ", 2)
+    pidx, kcode = int(sarg[0]), key2keycode(sarg[1])
+    cmd = sarg[2]
     
     psetup = option("players")
     psetup[pidx]["keys"][kcode] = cmd
@@ -59,7 +58,7 @@ def bind(c, arg):
     if 'f' not in c.locals:
         return
     fld = c.locals["f"]
-    fld.players()[pidx].profile["keys"][kcode] = cmd
+    fld.players[pidx].profile["keys"][kcode] = cmd
 
 def skin(c, arg):
     """/skin <player> <color> - Set skin for the player."""
@@ -73,7 +72,7 @@ def skin(c, arg):
     if 'f' not in c.locals:
         return
     fld = c.locals["f"]
-    fld.players()[pidx].set_skin(skin)
+    fld.players[pidx].set_skin(skin)
 
 def alias(c, arg):
     """/alias <newname> <oldname> - Define command <newname> to execute <oldname> command"""
@@ -84,29 +83,34 @@ def alias(c, arg):
 def say(c, arg):
     """/say <player> <message> - Say the <message> to the public.
                                  <player> - index of the player"""
-    pidx, msg = arg.split()
+    sarg = arg.split(" ", 1)
+    pidx = int(sarg[0])
 
     if 'f' not in c.locals:
         return
     fld = c.locals["f"]
-    fld.players()[pidx].say(arg)
+    fld.players[pidx].say0(sarg[1])
 
 def get_option(c, arg):
     """/get <optname> - Print value for <optname>"""
     if not options().has_key(arg):
-        c.output("- Unknown option: %s"%arg)
-        c.output("Available options: %s"%options().keys())
+        c.message("- Unknown option: %s"%arg)
+        c.message("Available options: %s"%options().keys())
     else:
-        c.output("%s => %s"%(arg, repr(option(arg))))
+        c.message("%s => %s"%(arg, repr(option(arg))))
 
 def set_option(c, arg):
     """/set <optname> <value> - Set <optname> to <value>"""
     k, v = arg.split()
-    options()[k] = eval(v)
+    if k == 'debug':
+        options()[k] = v.split()
+    else:
+        options()[k] = eval(v)
     get_option(c, k)
 
 def quit(c):
     """/quit - Quit the game."""
+    print "quit"
     sys.exit(0)
 
 def screenshot(c, fn=None):
@@ -118,41 +122,56 @@ def screenshot(c, fn=None):
     c.message("+ Screenshot -> %s"%fn)
     pygame.image.save(pygame.display.get_surface(), fn)
 
+def import_plugin(c, arg):
+    """/import <plugin> - Import plugin."""
+    # NOT YET
+    exec "import %s"%arg
+
 def exec_file(c, arg):
     """/exec <file> - Execute file with commands."""
-    def comments(l):
+    def ws_and_comments(l):
         l = l.lstrip()
         if not l or l[0] == "#":
             return False
         return True
 
     with open(arg, "r") as f:
-        map(c.send_command, filter(comments, f))
+        lnum = 0
+        for l in f:
+            lnum += 1
+            if ws_and_comments(l):
+                err = c.safe_send_command(l[:-1])
+                if err:
+                    c.message("Error (%s) line=%d: %s"%(err.__class__, lnum, err))
+#        map(c.safe_send_command, filter(ws_and_comments, f))
 
 def echo(c, arg):
     """/echo <msg> - Output message to the console"""
-    c.output(arg)
+    c.message(arg)
 
 def level(c, arg):
-    """/level <num> - Start player level <NUM>."""
+    """/level <num> [<ticks>] - Start player level <NUM>."""
     import levels
     import itertools
 
-    lvl = int(arg) - 1
+    args = arg.split()
+    if len(args) > 1:
+        lvl, ticks = int(args[0]), int(args[1])
+    else:
+        lvl, ticks = int(arg), 0
 
     if 'f' not in c.locals:
         return
     fld = c.locals["f"]
-    fld.levels = iter([levels.Level1(fld), levels.Level2(fld),
-                       levels.Level3(fld), levels.Level4(fld),
-                       levels.Level5(fld)][lvl:])
-    fld.next_level()
+    fld.run_level(lvl)
+    for i in range(ticks):
+        fld.level.tick(fld)
 
 def help(c):
     """/help - Print available commands."""
     global commands
     for cmd, cfun in commands.iteritems():
-        c.output("%s"%cfun.__doc__)
+        c.message("%s"%cfun.__doc__)
 
 commands = {"fs":fullscreen, "get":get_option,
             "set":set_option, "quit":quit,
@@ -161,6 +180,7 @@ commands = {"fs":fullscreen, "get":get_option,
             "skin":skin, "alias":alias,
             "say": say, "level":level,
             "exec":exec_file, "echo":echo,
+            "import":import_plugin,
             "help": help}
 
 class Writable(list):
@@ -365,7 +385,7 @@ class Console:
         '''
 
         self.clear_input()
-        self.output(self.c_ps + text)
+        self.message(self.c_ps + text)
         self.c_scroll = 0
 
         if text: self.add_to_history(text)
@@ -375,7 +395,13 @@ class Console:
             else:
                 self.send_python(text)
         except Exception as err:
-            self.output("- Error: %s"%err)
+            self.message("- Error: %s"%err)
+
+    def safe_send_command(self, text):
+        try:
+            self.send_command(text)
+        except Exception as err:
+            return err
 
     def send_command(self, text):
         def parse_command(text):
@@ -393,10 +419,11 @@ class Console:
             try:
                 ret = apply(commands[cmd], (self,)+arg)
                 if ret:
-                    self.output("Ret: %s"%ret)
-            except TypeError:
+                    self.message("Ret: %s"%ret)
+            except Exception as err:
                 # Show command usage
-                self.output(commands[cmd].__doc__)
+                self.message("Error: %s"%err)
+                self.message(commands[cmd].__doc__)
         self.release_output()
 
     def send_python(self, text):

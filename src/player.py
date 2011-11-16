@@ -11,6 +11,10 @@ from misc import *
 from enemies import Bruns, Vits
 from hud import hud
 
+def wpn_empty_stats():
+    return {"nice-shots":[0,0], "damage": 0, "shots": 0, "kills": 0,
+            "headshots":0}
+
 def command(meth):
     """Decorator to execute method as command."""
     def cmd(self, event, arg):
@@ -70,11 +74,12 @@ class Player(AnimateStates, Creature):
 
         # Player this game statistics
         self.pstats = {"kills": 0,      # total kills
-                       "avg-damage":0,  # average damage per shot
-                       "damage": 0,     # total damage given
-                       "kills-stats": {}, # per enemy kills statistics
+                       # per enemy kills statistics
+                       "enemies": {},
+                       # per weapon stats
+                       "weapons": {"Pistol": wpn_empty_stats()},
                        "distance": 0,   # distance move
-                      }                 # player statistics
+                      }
 
         # Change the skin
         self.apply_skin()
@@ -90,7 +95,7 @@ class Player(AnimateStates, Creature):
         # Sprites for weapon and its reflection
         self.weapons = [weapons.Pistol(self)]
         self.weapon = self.weapons[0]
-        self.field.add(self.weapon, append=True)
+        self.field.add(self.weapon)
 
         # Sprites for crosshair and crosshair info
         if self.profile["crosshair"]:
@@ -125,7 +130,7 @@ class Player(AnimateStates, Creature):
     def set_skin(self, skin):
         """Set new skin for the player."""
         if 'player' in option("debug"):
-            debug("Set skin: %s"%(skin,))
+            debug("Player: Set skin: %s"%(skin,))
 
         # Reload states to ensure they have PLAYER_SCOLOR color
         self.states = dict([(basename(dr), load_animation(dr))
@@ -223,6 +228,7 @@ class Player(AnimateStates, Creature):
                 self.earn_money(crbruns[ci].bounty)
                 self.kills(crbruns[ci])
                 crbruns[ci].die("KrossatHuvud")
+
             self.apply_earned_money()
 
         # Adjust player's state
@@ -237,7 +243,7 @@ class Player(AnimateStates, Creature):
         elif self.state == 'JumpFall':
             if self.z == 0:
                 if 'player' in option("debug"):
-                    debug("After jump: %d,%d"%(self.x, self.y))
+                    debug("Player: After jump: %d,%d"%(self.x, self.y))
 
                 self.x_speed /= 2.0
                 self.y_speed /= 2.0
@@ -267,7 +273,10 @@ class Player(AnimateStates, Creature):
             if 'down' in self.keysdown and self.y_speed < PLAYER_YMAX:
                 self.y_speed += PLAYER_YACC
 
+        _sx, _sy = self.x, self.y
         self.apply_speed()
+        self.pstats["distance"] += math.sqrt((self.x-_sx)**2+(self.y-_sy)**2)
+
         if not (self.keysdown & set(['up', 'down'])):
             self.apply_yfric()
         if not (self.keysdown & set(['left', 'right'])):
@@ -288,6 +297,8 @@ class Player(AnimateStates, Creature):
         if self.state in Player.STATES_WITH_WEAPON:
             if 'fire' in self.keysdown:
                 if self.weapon.fire(f):
+                    self.pstats["weapons"][self.weapon.name]["shots"] += 1
+
                     self.x_speed += self.weapon.x_recoil
                     self.z_speed += self.weapon.z_recoil
                     if self.profile["show-hud"]:
@@ -301,6 +312,7 @@ class Player(AnimateStates, Creature):
                 play_sound(self.sounds["scream-death"])
 
         Creature.tick(self, f)
+        self.weapon.weapon_tick(f)
 
         # Move sprites
         AnimateStates.update(self)
@@ -335,6 +347,14 @@ class Player(AnimateStates, Creature):
             self.apply_earned_money()
 
             play_sound("ui/buygun.wav")
+
+            # Create weapon entry in the stats
+            self.pstats["weapons"][n] = wpn_empty_stats()
+
+            # HEHE on AWP
+            if n == 'AWP':
+                play_sound("player/laugh1.wav")
+
             # Call weapon constructor
             nwpn = getattr(weapons, n)(self)
             self.weapons.append(nwpn)
@@ -347,7 +367,9 @@ class Player(AnimateStates, Creature):
 
         # Buy certain weapon
         if wpnname:
-            if self.money >= WEAPONS[wpnname]["price"]:
+            if not wpnname in WEAPONS.keys():
+                self.say0("Invalid weapon: %s"%wpnname)
+            elif self.money >= WEAPONS[wpnname]["price"]:
                 return buy_it(wpnname)
             return None
 
@@ -362,9 +384,9 @@ class Player(AnimateStates, Creature):
     def switch_weapon(self, newpn):
         """Switch to new weapon NEWPN."""
         play_sound("weapons/reload.wav")
-        self.field.remove(*self.weapon)
+        self.field.remove(self.weapon)
         self.weapon = newpn
-        self.field.add(self.weapon, append=True)
+        self.field.add(self.weapon)
 
         if self.profile["show-hud"]:
             self.hud.select_weapon(self.weapon)
@@ -404,34 +426,18 @@ class Player(AnimateStates, Creature):
         if event.type not in [KEYDOWN, KEYUP]:
             return
 
-        # For debug
-        if 'player' in option("debug") and event.type == KEYUP:
-            if event.key == 49:
-                self.buy_weapon("Magnum")
-            elif event.key == 50:
-                self.buy_weapon("Pistol")
-            elif event.key == 51:
-                self.buy_weapon("MP5")
-            elif event.key == 52:
-                self.buy_weapon("Shotgun")
-            elif event.key == 53:
-                self.buy_weapon("MAC10")
-            elif event.key == 54:
-                self.buy_weapon("Flunk")
-            elif event.key == 55:
-                self.buy_weapon("M4")
-            elif event.key == 56:
-                self.buy_weapon("AWP")
-            elif event.key == 57:
-                self.buy_weapon("VintageShotgun")
-            elif event.key == 48:
-                self.buy_weapon("Minigun")
-
         # Execute the binding
         if keys.has_key(event.key):
             scmd = keys[event.key].partition(" ")
             cmd = getattr(self, scmd[0], self.invalid_cmd)
             cmd(event, scmd[2])
+
+    def print_pstats(self):
+        """Print player's statistics."""
+        print "%s: "%self.profile["name"]
+        for k in self.pstats:
+            print "  ", k, self.pstats[k]
+        print
 
     # Commands
     def invalid_cmd(self, event, arg):
@@ -441,7 +447,7 @@ class Player(AnimateStates, Creature):
 
             if cmd and cmd[0] == "/":
                 # Possible a console command
-                self.field.console.send_command(cmd[1:])
+                self.field.console.safe_send_command(cmd[1:])
             else:
                 self.say0("- Invalid command: %s"%cmd)
 
@@ -461,7 +467,7 @@ class Player(AnimateStates, Creature):
         self.state_start("Jump")
 
         if 'player' in option("debug"):
-            debug("Before jump: %d,%d"%(self.x, self.y))
+            debug("Player: Before jump: %d,%d"%(self.x, self.y))
 
         # calculate speeds
         self.z_speed = z
@@ -473,17 +479,39 @@ class Player(AnimateStates, Creature):
     def kills(self, enemy, prj=None):
         """ENEMY has been killed by player."""
         self.pstats["kills"] += 1
+        _ename = enemy.__class__.__name__
+        _pks = self.pstats["enemies"]
+        if not _pks.has_key(_ename):
+            _pks[_ename] = 0
+        _pks[_ename] += 1
+
+        if prj:
+            self.pstats["weapons"][prj.weapon.name]["kills"] += 1
+
         if self.profile["show-hud"]:
             self.hud.update_kills(self.pstats["kills"])
 
-    def nice_shot(self, prj):
+    def nice_shot(self, n08):
         """Notice a nice shot by the player."""
-        _ps = min(prj.given_damage/prj.weapon.damage, 8)
-        play_sound("player/laugh%d.wav"%_ps)
+        if 'player' in option('debug'):
+            debug("Player: NICE SHOT! %d"%n08)
+
+        # Fill pstats before normalizing n08
+        _npshots = self.pstats["weapons"][self.weapon.name]["nice-shots"]
+        _npshots[0] += 1
+        _npshots[1] += n08
+
+        if n08 > 8: n08 = 8
+        play_sound("player/laugh%d.wav"%n08)
 
         # Astonish some vitseal
         vitses = self.field.creatures(Vits)
-        if vitses: choice(vitses).nosa()
+        if vitses:
+            choice(vitses).nosa()
+
+    def nice_shot_projectile(self, prj):
+        """Notice a nice shot by the player."""
+        self.nice_shot(prj.given_damage/prj.weapon.damage)
 
     def hit(self, prj, dmg, head=False):
         """Player has been wounded by projectile PRJ and damage DMG."""
@@ -556,8 +584,14 @@ Player.reload = reload
 @weapon_not_firing
 def switch(self, event, arg):
     if arg:
-        print "SWITCH", arg
-        self.switch_weapon(self, arg)
+        if self.has_weapon(arg):
+            def wpn_byname(name):
+                for w in self.weapons:
+                    if w.__class__.__name__ == name:
+                        return w
+            self.switch_weapon(wpn_byname(arg))
+        else:
+            self.buy_weapon(arg)
     else:
         # Switch to next/prev weapon
         nwidx = self.weapons.index(self.weapon)
@@ -572,7 +606,6 @@ Player.switch = switch
 
 def jump(self, event, arg):
     if self.state in ['Walking', 'Stopped']:
-        print "arg: %s"%arg
         z, xc, yc = map(int, islice(chain(arg.split(), repeat('1')), 0, 3))
         self.jump_zxy(z, xc, yc)
 
@@ -584,3 +617,11 @@ def say(self, msg):
     self.say0(msg)
 
 Player.say = say
+
+@event_type(KEYUP)
+@command
+def game_over(self, arg):
+    self.field.game_is_over(self)
+
+Player.game_over = game_over
+
