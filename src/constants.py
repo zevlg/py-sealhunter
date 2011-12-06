@@ -12,12 +12,17 @@ LEVEL_TICKS = 3000                      # 1 minute per level
 #LEVEL_TICKS = 200                      # 1 minute per level
 
 # Field specifics
-TOP_LAYER = 500
+TOP_LAYER = 5000
+MID_LAYER = TOP_LAYER/2
+MID2_LAYER = MID_LAYER/2
+BOT_LAYER = MID2_LAYER/2
 
 ICE_YOFFSET = 51
 FLIMIT_WIDTH = (0, 640)
-FLIMIT_HEIGHT = (185, 480-52)
+FLIMIT_HEIGHT = (130+ICE_YOFFSET, 480-52)
 
+FIELD_INNER = ((0, FLIMIT_HEIGHT[0]),
+               (640, FLIMIT_HEIGHT[1]-FLIMIT_HEIGHT[0]))
 BULLET_OPAQUE = 100
 
 G_ACCEL = 0.33
@@ -132,7 +137,7 @@ WEAPONS = {"Pistol": {"price": 0,
                   "wpn_position": (18, 10),
                   "aim_position": 9,
                   "cross_xoffset": 60,
-                  "damage": 40,
+                  "damage": 60,
                   "muzzle": "big",
                   "x_recoil": 0.35,
                   "clip_size": 30,
@@ -193,7 +198,10 @@ ENEMIES = {"Bruns":
            dict(life=(0, 250), boss_life=1250,
                 ticks_step=3, speed_range=(0.7, 0.7),
                 can_press=True, bounty=200,
-                boss_bonus=200, headshot_multiplier=1.25),
+                # In original game i believe headshot_multiplier was
+                # 1.25. That is unfair!  You can't murder the boss with
+                # AWP into eye ;)
+                boss_bonus=200, headshot_multiplier=1.5),
 
            "Aktivist":
            dict(life=(30, 35), ticks_step=3,
@@ -223,7 +231,7 @@ ENEMIES = {"Bruns":
 
            # TODO: valross yet has invalid values
            "Valross":
-           dict(life=(0,0), boss_life=15000,
+           dict(life=(0,0), boss_life=1500,#0,
                 ticks_step=7, speed_range=(0.25, 0.25),
                 headshot_multiplier=1.25)
 ##           dict(life=(10000, 0), boss_life=10000,
@@ -273,7 +281,7 @@ P1_SETUP = {"name": "Clark Kent",
             "autokill-crawling-bruns": True,
             "autobuy-list": []}
 
-P2_SETUP = {"name": "Peter Parker",
+P2_SETUP = {"name": "Luke Skywalker",
             "enabled": True,
             "skin": (0, 180, 0),
             "hud-position": (590, 12),
@@ -308,13 +316,14 @@ P3_SETUP = {"name": "Max Eisenhardt",
             "autobuy-list": []}
 
 DEBUG_TYPES = ["player", "enemy", "weapon", "particle",
+               "bullet-trays",
                "reflection", "level", "boss", "keys"]
 
 DEFAULT_OPTIONS = {"reflections": ["player", "enemies", "weapon",
                                    "muzzle", "clips", "shells",
                                    "grenades", "particles"],
                    "accurate-fps": False,
-                   "debug": (),
+                   "debug": [],
                    "fullscreen": False,
 
                    # Sounds settings
@@ -328,10 +337,10 @@ DEFAULT_OPTIONS = {"reflections": ["player", "enemies", "weapon",
                    "music-shuffle": True,
 
                    # Show game particles
-                   "show": ["fps", "clips", "shells", "bullets"],
+                   "show": ["fps", "tree", "clips", "shells", "bullets"],
 
                    # Misc
-                   "messages-speed": 150, # 3 seconds to show
+                   "messages-speed": FPS*2, # 2 seconds to show
                    "max-messages": 10,
 
                    # Fun options

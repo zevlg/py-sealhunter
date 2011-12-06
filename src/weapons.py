@@ -71,25 +71,25 @@ class Weapon(pygame.sprite.Group, WithReflection):
         else:
             self.s_reload = self.s_weapon
 
-        self.scs.image = self.s_weapon
+        sprite_image(self.scs, self.s_weapon)
         self.add(self.scs)
 
     def load_wpn_texture(self, w):
-        return substitute_color(load_texture(w).copy(), PLAYER_SCOLOR,
+        return substitute_color(load_texture(w), PLAYER_SCOLOR,
                                 self.player.profile["skin"])
 
     def weapon_tick(self, f):
         self.ticks += 1
         self.usage_ticks += 1
 
-        if self.state == 'Fire' and self.ticks >= self.fire_ticks:
+        if self.state is 'Fire' and self.ticks >= self.fire_ticks:
             self.state = 'Idle'
             self.ticks = 0
-            self.scs.image = self.s_weapon
+            sprite_update(self.scs, self.s_weapon)
             if self.bullets == 0:
                 self.reload(f)
 
-        if self.state == 'Reload':
+        if self.state is 'Reload':
             if len(self.a_reload) > 1:
                 arlen = self.reload_ticks/(len(self.a_reload) - 1)
                 if self.ticks % arlen == 0:
@@ -100,7 +100,7 @@ class Weapon(pygame.sprite.Group, WithReflection):
                 self.state = 'Idle'
                 self.bullets = self.clip_size
                 self.ticks = 0
-                self.scs.image = self.s_weapon
+                sprite_update(self.scs, self.s_weapon)
                 self.x, self.y = self.wpn_position
 
                 if self.player.profile["show-hud"]:
@@ -108,20 +108,20 @@ class Weapon(pygame.sprite.Group, WithReflection):
 
         # Move sprite to proper position
         _sp = self.player
-        if _sp.state in _sp.states_with_weapon():
+        if _sp.state in _sp.STATES_WITH_WEAPON:
             wx, wy = _sp.xx()-self.x, _sp.yy()-self.y
         else:
             wx = wy = -100              # hide
-        move_sprite(self.scs, wx, wy)
+        sprite_move(self.scs, wx, wy)
         # for reflection
         self.z = _sp.z + (self.y - self.scs.rect.h + 1)*1.6
         self.update_reflection()
 
     def can_fire(self):
         """Return True if weapon can fire right now."""
-        if self.state == 'Reload':
+        if self.state is 'Reload':
             return False
-        elif self.state == 'Fire' and self.ticks < self.fire_ticks:
+        elif self.state is 'Fire' and self.ticks < self.fire_ticks:
             return False
         if self.bullets < 1:
             return False
@@ -156,7 +156,25 @@ class Weapon(pygame.sprite.Group, WithReflection):
             sh.update_ao()
             f.add(sh)
 
-    def throw_bullets(self, f):
+    def apply_bullets(self, bullets, kills):
+        """Apply throwed bullets."""
+        _player = self.player
+        for cr in kills:
+            _player.earn_money(cr.bounty)
+
+        # 3 or more kills at once is a nice shot!
+        if len(kills) > 2:
+            if 'weapon' in option('debug'):
+                debug("WPN: %d kills by single shot!"%len(kills))
+            _player.nice_shot(len(kills)-1)
+
+        # Apply nice shots
+        # nice shots may earn some money as well
+        _player.apply_niceshots(self)
+
+        _player.apply_earned_money()
+
+    def throw_bullets(self, f, bullets=[]):
         """Throw bullets to all the creatures."""
         # NOTE:
         #   all bullets have the same .fx and .fy at start
@@ -165,37 +183,28 @@ class Weapon(pygame.sprite.Group, WithReflection):
         # 1. Create a rectangle that occupy all bullets
         # 2. Find creatures that collides with that rectangle
         # 3. Calculate precise hitpoints
-        _bullets = [Bullet(self, f) for _ in xrange(self.bullets_per_shot)]
-        _bullys = map(lambda x: x.bully(0), _bullets)
-        _ymin, _ymax = min(_bullys), max(_bullys)
-        _brect = pygame.Rect(0, _ymin, _bullets[0].fx, _ymax - _ymin)
-        _crts = filter(lambda x: _brect.colliderect(x.rect), f.creatures())
+        if not bullets:
+            bullets = [Bullet(self, f) for _ in xrange(self.bullets_per_shot)]
+        _bullys = map(lambda x: x.bully(0), bullets)
+        _ymin = min(bullets[0].fy, *_bullys)
+        _ymax = max(bullets[0].fy, *_bullys)
+        _brect = pygame.Rect(0, _ymin, bullets[0].fx, _ymax - _ymin)
+        _crts = filter(lambda x: _brect.colliderect(x.rect),
+                       f.creatures())
 ##        _ocrts = f.creatures()
 ##        _ocris = _brect.collidelistall(map(lambda c: c.rect, _ocrts))
 ##        _crts = [_ocrts[i] for i in _ocris]
 
         if 'weapon' in option("debug"):
-            debug("WPN: CREATURES to hit: %s"%_crts)
+            debug("WPN: CREATURES to hit: %s, brect=%s"%(_crts, _brect))
 
-        # Apply bullet hits if any
-        already_niceshot = False
-        for bul in _bullets:
+        # Apply bullets hits if any
+        for bul in bullets:
             bul.apply_hits(_crts)
-            if bul.niceshot:
-                already_niceshot = True
 
         # Earn money for killed creatures
         _deadcrts = filter(lambda c: not c.is_alive(), _crts)
-        for cr in _deadcrts:
-            self.player.earn_money(cr.bounty)
-
-        self.player.apply_earned_money()
-
-        # 3 or more kills at once is a nice shot!
-        if not already_niceshot and len(_deadcrts) > 3:
-            if 'weapon' in option('debug'):
-                debug("WPN: %d kills by single shot!"%len(_deadcrts))
-            self.player.nice_shot(len(_deadcrts)-2)
+        self.apply_bullets(bullets, _deadcrts)
 
     def fire(self, f):
         if not self.can_fire(): return False
@@ -248,7 +257,7 @@ Return True if weapon has been reloaded."""
         self.state = 'Reload'
         self.ticks = 0
         play_sound(self.a_reload[0])
-        self.scs.image = self.s_reload
+        sprite_update(self.scs, self.s_reload)
 
         if not (hasattr(self, "clip_attrs") and \
                 self.clip_attrs.has_key("disabled")):
@@ -262,7 +271,7 @@ class Pistol(Weapon):
         self.clip = self.shell = "Small"
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks == 0: self.x -= 1; self.y += 1
             elif self.ticks == 2: self.x += 1; self.y -= 1
 
@@ -280,32 +289,32 @@ class Magnum(Weapon):
         self.s_reload = pygame.transform.rotate(self.s_fire[1], 90)
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks == 0:
-                self.scs.image = self.s_fire[0]
+                sprite_update(self.scs, self.s_fire[0])
             elif self.ticks == 4:
-                self.scs.image = self.s_fire[1]
+                sprite_update(self.scs, self.s_fire[1])
                 self.x, self.y = 8, 15
             elif self.ticks == 8:
-                self.scs.image = self.s_fire[2]
+                sprite_update(self.scs, self.s_fire[2])
                 self.x, self.y = 1, 17
             elif self.ticks == 12:
-                self.scs.image = self.s_fire[1]
+                sprite_update(self.scs, self.s_fire[1])
                 self.x, self.y = 8, 15
             elif self.ticks == 16:
-                self.scs.image = self.s_fire[0]
+                sprite_update(self.scs, self.s_fire[0])
                 self.x, self.y = self.wpn_position
             elif self.ticks == 20:
-                self.scs.image = self.s_weapon
+                sprite_update(self.scs, self.s_weapon)
                 self.x, self.y = self.wpn_position
 
         Weapon.weapon_tick(self, f)
 
-        if self.state == 'Reload':
+        if self.state is 'Reload':
             if self.ticks < 2:
                 self.x, self.y = 12, 9
             elif self.ticks > 200:
-                self.scs.image = self.s_weapon
+                sprite_update(self.scs, self.s_weapon)
                 self.x, self.y = self.wpn_position
 
     def reload(self, f):
@@ -325,15 +334,15 @@ class MP5(Weapon):
         self.shell_attrs = {"x_speed": rand_speed(2,2.5)}
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks == 0:
-                self.scs.image = self.s_fire[0]
+                sprite_update(self.scs, self.s_fire[0])
                 self.x -= 1; self.y += 1
             elif self.ticks == 1:
-                self.scs.image = self.s_fire[1]
+                sprite_update(self.scs, self.s_fire[1])
                 self.x -= 1; self.y += 1
             elif self.ticks == 3:
-                self.scs.image = self.s_fire[2]
+                sprite_update(self.scs, self.s_fire[2])
                 self.x += 1; self.y -= 1
             elif self.ticks == self.fire_ticks-1:
                 self.x, self.y = self.wpn_position
@@ -344,12 +353,12 @@ class Grenades(Weapon):
     __metaclass__ = MetaWeapon
     def __init__(self, *args):
         Weapon.__init__(self, *args)
-        self.splash_radius = 95
+        self.splash_radius = 75 #95
         self.s_fire.append(self.s_weapon)
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
-            self.scs.image = self.s_fire[self.ticks/2]
+        if self.state is 'Fire':
+            sprite_update(self.scs, self.s_fire[self.ticks/2])
             if self.ticks < 4:
                 self.x -= 2; self.y += 2
             else:
@@ -380,22 +389,22 @@ class Shotgun(Weapon):
                             "z_speed": rand_speed(2,3)}
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks == 3:
-                self.scs.image = self.s_fire[0]
+                sprite_update(self.scs, self.s_fire[0])
                 self.x, self.y = self.wpn_position[0]+2, 17
             elif self.ticks == 21:
-                self.scs.image = self.s_fire[1]
+                sprite_update(self.scs, self.s_fire[1])
                 self.drop_shell(f)
             elif self.ticks == 35:
-                self.scs.image = self.s_fire[2]
+                sprite_update(self.scs, self.s_fire[2])
             elif self.ticks == self.fire_ticks-1:
-                self.scs.image = self.s_weapon
+                sprite_update(self.scs, self.s_weapon)
                 self.x, self.y = self.wpn_position
 
         Weapon.weapon_tick(self, f)
 
-        if self.state == 'Reload':
+        if self.state is 'Reload':
             if self.ticks % 20 == 0:
                 play_sound(self.a_reload[0], True)
 
@@ -434,18 +443,18 @@ class Flunk(Weapon):
     __metaclass__ = MetaWeapon
     def __init__(self, *args):
         Weapon.__init__(self, *args)
-        self.splash_radius = 100
+        self.splash_radius = 85 #100
 
         self.a_reload_grenade = self.a_reload[1]
         del self.a_reload[1]
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
-            self.scs.image = self.s_fire[self.ticks/2]
+        if self.state is 'Fire':
+            sprite_update(self.scs, self.s_fire[self.ticks/2])
 
         Weapon.weapon_tick(self, f)
 
-        if self.state == 'Reload' and self.ticks % 30 == 0:
+        if self.state is 'Reload' and self.ticks % 30 == 0:
             play_sound(self.a_reload_grenade, True)
 
     def throw_bullets(self, f):
@@ -465,19 +474,19 @@ class M4(Weapon):
         self.shell_attrs = {"x_speed": rand_speed(2,2.5)}
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks == 0:
-                self.scs.image = self.s_fire[0]
+                sprite_update(self.scs, self.s_fire[0])
                 self.x = self.wpn_position[0] + 3
                 self.y = self.wpn_position[1] + 2
             elif self.ticks == self.fire_ticks/2:
-                self.scs.image = self.s_fire[1]
+                sprite_update(self.scs, self.s_fire[1])
                 self.x = self.wpn_position[0] + 2
-        elif self.state == 'Reload':
-            self.scs.image = self.s_reload
+        elif self.state is 'Reload':
+            sprite_update(self.scs, self.s_reload)
             self.x, self.y = self.wpn_position[0], 19
         else:
-            self.scs.image = self.s_weapon
+            sprite_update(self.scs, self.s_weapon)
             self.x, self.y = self.wpn_position
 
         Weapon.weapon_tick(self, f)
@@ -496,28 +505,36 @@ class AWP(Weapon):
 
         # Create sight sprite
         self.sight = dirty_sprite()
-        self.sight._layer = TOP_LAYER
+        self.sight._layer = MID_LAYER
         sscol = self.player.profile["sniper-sight-color"]
         wwsight = pygame.Surface((666, len(sscol))).convert_alpha()
         wwsight.fill((0,0,0,0))
         for i in range(len(sscol)):
             pygame.draw.line(wwsight, sscol[i], (0, i), (666, i))
-        self.sight.image = wwsight
+
+        sprite_image(self.sight, wwsight)
         self.add(self.sight)
 
     def weapon_tick(self, f):
         Weapon.weapon_tick(self, f)
 
         if self.state in ['Fire', 'Reload']:
-            move_sprite(self.sight, -100, -100)
+            sprite_move(self.sight, -100, -100)
         else:
             _ssr = self.scs.rect
-            move_sprite(self.sight, _ssr.x-666, _ssr.y+3)
+            sprite_move(self.sight, _ssr.x-666, _ssr.y+3)
 
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             self.x = self.wpn_position[0]
             if self.ticks < 20:
                 self.x -= 3
+
+    def apply_bullets(self, bullets, kills):
+        _bul = bullets[0]
+        if len(_bul.headshots) > 2:
+            self.player.nice_shot(len(_bul.headshots))
+
+        Weapon.apply_bullets(self, bullets, kills)
 
 class VintageShotgun(Weapon):
     __metaclass__ = MetaWeapon
@@ -532,7 +549,7 @@ class VintageShotgun(Weapon):
         self.a_load = map(load_sound, aglob("weapons/9/load*.wav"))
 
     def weapon_tick(self, f):
-        if self.state == 'Fire':
+        if self.state is 'Fire':
             if self.ticks < 30:
                 if self.ticks == 0:
                     play_sound(self.a_load[0])
@@ -540,11 +557,11 @@ class VintageShotgun(Weapon):
                     play_sound(self.a_load[1])
 
                 if self.ticks % 3 == 0:
-                    self.scs.image = self.s_load[self.ticks/3]
+                    sprite_update(self.scs, self.s_load[self.ticks/3])
 
             if self.ticks == 35:
                 # Real fire
-                self.scs.image = self.s_weapon
+                sprite_update(self.scs, self.s_weapon)
 
                 self.bullets -= 2
                 play_sound(self.a_fire[0])
@@ -626,7 +643,7 @@ INC can be negative in order to decrease heating."""
 
             if self.ticks % 5 == 4:
                 self.inc_heat(-1)
-        elif self.state == 'Fire':
+        elif self.state is 'Fire':
             if self.ticks == self.fire_ticks/2:
                 self.x -= 1
             elif self.ticks == self.fire_ticks-1:
@@ -650,4 +667,4 @@ INC can be negative in order to decrease heating."""
                     self.player.tick(f)
 
         Weapon.weapon_tick(self, f)
-        self.scs.image = self.s_fire[self.heatidx]
+        sprite_update(self.scs, self.s_fire[self.heatidx])

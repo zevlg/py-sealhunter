@@ -12,13 +12,14 @@ OPTIONS = {}
 
 MEMOIZED = {}
 def memoize(fun):
-    def mfun(*args):
+    def mfun(*args, **kwargs):
         mm = MEMOIZED[fun]
-        if mm.has_key(args):
+        if not kwargs and mm.has_key(args):
             return mm[args]
 
-        rv = apply(fun, args)
-        mm[args] = rv
+        rv = apply(fun, args, kwargs)
+        if not kwargs:
+            mm[args] = rv
         return rv
     MEMOIZED[fun] = {}
     return mfun
@@ -52,23 +53,35 @@ def load_font(path, size):
         return pygame.font.Font(maybe_prepend(path, "fonts/"), size)
     return pygame.font.SysFont(path, size)
 
+def substitute_color(surf, fc, tc):
+    """For surface SURF substitute color FC to color TC.
+Return new surface, with substituted color."""
+    retsurf = surf.copy()
+    for y in range(surf.get_height()):
+        for x in range(surf.get_width()):
+            if surf.get_at((x,y)) == fc:
+                retsurf.set_at((x,y), tc)
+    return retsurf
+
 @memoize
-def load_animation(dr, alpha=False):
-    return map(lambda x: load_texture(x, alpha), tglob(dr+"/*.png"))
+def load_animation(dr, alpha=False, subscolor=None):
+    def loadit(x):
+        txt = load_texture(x, alpha)
+        if subscolor:
+            return substitute_color(txt, *subscolor)
+        else:
+            return txt
+    return map(loadit, tglob(dr+"/*.png"))
+
+@memoize
+def load_animation_mask(dr):
+    return map(lambda x: pygame.mask.from_surface(load_texture(x)),
+               tglob(dr+"/*.png"))
 
 def make_transparent(surf, trans_color=(0,255,255)):
     """Make surface SURF to be fully transparent."""
     surf.set_colorkey(trans_color)
     surf.fill(trans_color)
-
-def substitute_color(surf, fc, tc):
-    """For surface SURF substitute color FC to color TC.
-Substitution is done destructively."""
-    for y in range(surf.get_height()):
-        for x in range(surf.get_width()):
-            if surf.get_at((x,y)) == fc:
-                surf.set_at((x,y), tc)
-    return surf
 
 def options_load():
     global OPTIONS
@@ -102,22 +115,33 @@ def debug(str):
         sys.stderr.write(str)
         sys.stderr.write("\n")
 
-def move_sprite(sprite, x, y):
-    """Move SPRITE to X,Y position."""
-    sprite.rect = sprite.image.get_rect().move(x, y)
+def sprite_image(sprite, img):
+    """For SPRITE set image to IMG."""
+    sprite.image = img
+    sprite.rect = img.get_rect()
+
+def sprite_update(sprite, newimg):
+    sprite.image = newimg
+    sprite.rect.size = newimg.get_size()
     sprite.dirty = 1
 
-def move_center(sprite, x, y):
-    sprite.rect = sprite.image.get_rect()
-    sprite.rect.center = x,y
-    sprite.dirty = 1
+def sprite_move(sprite, x, y):
+    """Move SPRITE to X,Y position."""
+    if sprite.rect.topleft != (x,y):
+        sprite.rect.topleft = x,y
+        sprite.dirty = 1
+
+def sprite_center(sprite, point):
+    if sprite.rect.center != point:
+        sprite.rect.center = point
+        sprite.dirty = 1
 
 def rand_speed(min, max):
     """Return function which return random float betwean MIX and MAX."""
     def rndspeed():
         return randint(int(min*100),int(max*100))/100.0
     return rndspeed
-    
+
 def dirty_sprite():
     ds = pygame.sprite.DirtySprite()
     ds.visible = 1
@@ -141,21 +165,36 @@ def play_rnd_sound(sounds):
     if sounds:
         play_sound(choice(sounds))
 
+BLOOD_CACHE = {}
 def gen_blood(w, h, color="red"):
     """Random red pixels scaled to WxH.
 Intended to emulate blood."""
     # TODO: probably introduce some kind of blood particles cache
-    bs = pygame.Surface((2*w,2*h))
-    CKEY = (255,255,255)
-    bs.set_colorkey(CKEY)
-    bs.fill(CKEY)
-    rr = randint(0,60)
+    global BLOOD_CACHE
+    _bckey = (w,h)
+    if not BLOOD_CACHE.has_key(_bckey):
+        BLOOD_CACHE[_bckey] = []
+    _cached = BLOOD_CACHE[_bckey]
+    if len(_cached) > 50:
+        return choice(_cached)
+
+    bs = pygame.Surface((w, h))
+    make_transparent(bs, (255,255,255))
+#    bs = pygame.Surface((w, h), pygame.SRCALPHA)
+#    make_transparent(bs, (250,100,100))
+
+    rr = randint(80, 120)
     if color == "yellow":
-        bc = pygame.Color(140+rr,140+rr,rr/2,255)
+        bc = pygame.Color(100+rr, 140+rr, rr/2)
     else:
-        bc = pygame.Color(140+rr,rr/2,rr/2,255)
-    pygame.gfxdraw.filled_ellipse(bs,w,h,w,h,bc)
-    return pygame.transform.smoothscale(bs, (w, h)).convert()
+        bc = pygame.Color(30+rr, 0, 0)
+    pygame.gfxdraw.filled_ellipse(bs, w/2, h/2, w/2, h/2, bc)
+#    pygame.gfxdraw.filled_ellipse(bs, w/2, h/2, w/2, h/2, bc)
+#    pygame.gfxdraw.aaellipse(bs, w/2, h/2, w/2, h/2, pygame.Color(55+rr, 0,0))
+#    bs = pygame.transform.smoothscale(bs, (w, h)).convert_alpha()
+    bs = bs.convert()
+    _cached.append(bs)
+    return bs
 
 def key2keycode(key):
     """Convert KEY string to pygame constant."""

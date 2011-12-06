@@ -7,6 +7,9 @@ import sealhunter
 from misc import *
 from constants import *
 
+# hash of last item selected in menu
+SELECTED = {}
+
 MMENU_POSITION = (450, 240)
 
 MENU_PCOLOR = (50, 50, 50)
@@ -107,7 +110,7 @@ class Menu:
         for mi in mitems:
             self.actions[mi[0]] = mi[1]
         # First items is selected by default
-        self.selected = self.items[0]
+        self.selected = self.items[SELECTED.get(name, 0)]
 
         self.acolor = MENU_ACOLOR
         self.pcolor = MENU_PCOLOR
@@ -142,9 +145,13 @@ class Menu:
         if event.type == KEYUP:
             sidx = self.items.index(self.selected)
             if event.key == K_UP:
-                self.selected = self.items[sidx-1]
+                sitem = sidx - 1
+                self.selected = self.items[sitem]
+                SELECTED[self.name] = sitem
             elif event.key == K_DOWN:
-                self.selected = self.items[(sidx+1)%len(self.items)]
+                sitem = (sidx+1)%len(self.items)
+                self.selected = self.items[sitem]
+                SELECTED[self.name] = sitem
             elif event.key == K_RETURN and self.actions.has_key(self.selected) and self.actions[self.selected]:
                 # Execute action
                 self.actions[self.selected]()
@@ -210,7 +217,8 @@ class NewGameMenu(Menu):
                       [#('1 Player', self.player1),
                        #('2 Players', self.player2),
                        ('Single-player', self.single),
-                       ('Multi-player', self.multi),
+                       ('2-players', self.multi2),
+                       ('3-players', self.multi3),
                        ('Network', self.network),
                        ('Back', self.exit)])
         self.acolor = SUBMENU_ACOLOR
@@ -222,11 +230,17 @@ class NewGameMenu(Menu):
         loop_menu(SinglePlayerMenu(self.pmenu))
         self.done = True
 
-    def multi(self):
+    def multi(self, n):
         pnames = [p["name"] for p in option("players")
-                  if p.get("enabled", False)]
+                  if p.get("enabled", False)][:n]
         sealhunter.new_game(pnames, SH_CONSOLE)
         self.done = True
+        
+    def multi2(self):
+        self.multi(2)
+
+    def multi3(self):
+        self.multi(3)
 
     def network(self):
         self.done = True

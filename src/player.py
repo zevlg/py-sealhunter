@@ -22,7 +22,7 @@ def command(meth):
     return cmd
 
 class Player(AnimateStates, Creature):
-    STATES_WITH_WEAPON = ['Walking', 'Stopped', 'InAir', 'Jump', 'JumpFall']
+    STATES_WITH_WEAPON = ['Walking', 'Stopped', 'InAir']
     def __init__(self, profile, **kwargs):
         ss = {"Stopped":{0:[(5,19), (2,0), (11,9)]},
               "Walking":{0:[(6,19), (3,0), (12,9)],
@@ -70,6 +70,7 @@ class Player(AnimateStates, Creature):
         # Player profile (name, skin, keys, etc)
         self.profile = profile
         self.money = self.earned_money = 0
+        self.niceshot_n08 = 0
         self.keysdown = set()
 
         # Player this game statistics
@@ -104,13 +105,13 @@ class Player(AnimateStates, Creature):
 
         if self.profile["crosshair-info"]:
             self.cross_info = dirty_sprite()
-            self.cross_info._layer = 300 # above everything
+            self.cross_info._layer = MID_LAYER # above everything
             self.setup_crosshair_info()
             self.add(self.cross_info)
 
         if self.profile["money-info"]:
             self.money_info = dirty_sprite()
-            self.money_info._layer = 300 # above everything
+            self.money_info._layer = MID_LAYER # above everything
             self.setup_money_info()
             self.add(self.money_info)
 
@@ -121,8 +122,7 @@ class Player(AnimateStates, Creature):
     def apply_skin(self):
         # Substitute colors in state images according to skin
         def convt(t):
-            return substitute_color(t.copy(), PLAYER_SCOLOR,
-                                    self.profile["skin"])
+            return substitute_color(t, PLAYER_SCOLOR, self.profile["skin"])
 
         for st in self.states:
             self.states[st] = map(convt, self.states[st])
@@ -149,14 +149,15 @@ class Player(AnimateStates, Creature):
 
     def setup_crosshair(self):
         self.cross = dirty_sprite()
-        self.cross._layer = TOP_LAYER
-        self.cross.image = load_texture("Misc/blue_crosshair_1.png").copy()
-        substitute_color(self.cross.image, PLAYER_CHCOLOR,
-                         self.profile["crosshair-color"])
-        move_sprite(self.cross, -100, -100)
+        self.cross._layer = MID_LAYER
+        csimg = substitute_color(load_texture("Misc/blue_crosshair_1.png"),
+                                 PLAYER_CHCOLOR,
+                                 self.profile["crosshair-color"])
+        sprite_image(self.cross, csimg)
+        sprite_move(self.cross, -100, -100)
 
     def setup_crosshair_info(self):
-        if self.weapon.state == 'Reload':
+        if self.weapon.state is 'Reload':
             rprc = int((self.weapon.ticks*100.0)/self.weapon.reload_ticks)
             text = "%d%%"%((rprc/10)*10)
             coff = int(1.5*rprc)
@@ -167,13 +168,7 @@ class Player(AnimateStates, Creature):
             coff = int(1.5*bprc)
             tcol = (255-coff, coff, 0, 255-bprc)
 
-        _sci = self.cross_info
-        _sci.image = self.font.render(text, True, tcol)
-        _sci.rect = _sci.image.get_rect()
-        cix = self.xx() - self.weapon.cross_xoffset
-        ciy = self.yy() - self.weapon.aim_position - MONEY_FONT_SIZE
-        _sci.rect.center = cix, ciy
-        _sci.dirty = 1
+        sprite_image(self.cross_info, self.font.render(text, True, tcol))
 
     def setup_money_info(self):
         mcol = self.profile["skin"]
@@ -204,13 +199,20 @@ class Player(AnimateStates, Creature):
         """Return True if player can walk."""
         if self.state in ['Stopped', 'Walking']:
             return True
-        if self.state == 'InAir' and self.z <= 0:
+        if self.state is 'InAir' and self.z <= 0:
             return True
         return False
 
-    def states_with_weapon(self):
-        return ['Walking', 'Stopped', 'InAir', 'Jump', 'JumpFall']
+    def die(self, prj):
+        Creature.die(self, prj)
+        play_sound(self.sounds["scream-death"])
+        self.gib_gen(("Player1/Death1/PlayerHead", 26),
+                     subscolor=(PLAYER_SCOLOR, self.profile["skin"]))
 
+        self.field.remove(self.weapon)
+        self.field.remove(self)
+        self.field.players.remove(self)
+        
     def tick(self, f):
         # possible change state
         AnimateStates.tick(self, f)
@@ -237,10 +239,10 @@ class Player(AnimateStates, Creature):
                 self.state_start('Walking')
             else:
                 self.state_start('Stopped')
-        elif self.state == 'Jump':
+        elif self.state is 'Jump':
             if self.z_speed <= 0:
                 self.state_start('JumpFall')
-        elif self.state == 'JumpFall':
+        elif self.state is 'JumpFall':
             if self.z == 0:
                 if 'player' in option("debug"):
                     debug("Player: After jump: %d,%d"%(self.x, self.y))
@@ -249,9 +251,9 @@ class Player(AnimateStates, Creature):
                 self.y_speed /= 2.0
                 self.z_speed = 0
                 self.state_start('Sitting')
-        elif self.state == "Sitting":
-            self.state_start("GetUp")
-        elif self.state == 'GetUp':
+        elif self.state is 'Sitting':
+            self.state_start('GetUp')
+        elif self.state is 'GetUp':
             if self.state_idx == self.state_frames()-1:
                 if self.x_speed > 0 or self.y_speed > 0:
                     self.state_start("Walking")
@@ -264,13 +266,13 @@ class Player(AnimateStates, Creature):
 
         # Move player if not in air and walking
         if self.z == 0 and self.state in 'Walking':
-            if 'left' in self.keysdown and self.x_speed > -PLAYER_XMAX:
+            if self.x_speed > -PLAYER_XMAX and 'left' in self.keysdown:
                 self.x_speed -= PLAYER_XACC
-            if 'right' in self.keysdown and self.x_speed < PLAYER_XMAX:
+            if self.x_speed < PLAYER_XMAX and 'right' in self.keysdown:
                 self.x_speed += PLAYER_XACC
-            if 'up' in self.keysdown and self.y_speed > -PLAYER_YMAX:
+            if self.y_speed > -PLAYER_YMAX and 'up' in self.keysdown:
                 self.y_speed -= PLAYER_YACC
-            if 'down' in self.keysdown and self.y_speed < PLAYER_YMAX:
+            if self.y_speed < PLAYER_YMAX and 'down' in self.keysdown:
                 self.y_speed += PLAYER_YACC
 
         _sx, _sy = self.x, self.y
@@ -283,13 +285,14 @@ class Player(AnimateStates, Creature):
             self.apply_xfric()
 
         # Check that player is inside field
-        if self.x >= 640: self.x = 640-1; self.x_speed = 0
+        if self.x >= 640-1: self.x = 640-1; self.x_speed = 0
         if self.x < 0: self.x = 0; self.x_speed = 0
         if self.y > FLIMIT_HEIGHT[1]:
             self.y = FLIMIT_HEIGHT[1]
             self.y_speed = 0
 
-        while not f.is_inside(self.x, self.y-8, True):
+        while self.y < FLIMIT_HEIGHT[0] and \
+                  not f.is_inside(self.x, self.y-8, True):
             self.y += 0.5
             self.y_speed = 0
 
@@ -303,15 +306,18 @@ class Player(AnimateStates, Creature):
                     self.z_speed += self.weapon.z_recoil
                     if self.profile["show-hud"]:
                         self.hud.update_bullets(self.weapon)
+                    if self.profile["crosshair-info"]:
+                        self.setup_crosshair_info()
 
         # Check the life and damage before Creature.tick
         if self.total_hit > 0:
             if self.total_hit > 100 and self.is_alive():
                 play_sound(self.sounds["scream-hit"], True)
-            elif not self.is_alive():
-                play_sound(self.sounds["scream-death"])
 
         Creature.tick(self, f)
+        # May die
+        if not self.is_alive():
+            return
         self.weapon.weapon_tick(f)
 
         # Move sprites
@@ -319,23 +325,28 @@ class Player(AnimateStates, Creature):
         self.apply_position()
         self.update_reflection()
 
+        # Update the layer
+        _nlayer = self.y
+        if abs(_nlayer - self.scs._layer) > 2:
+            f.change_layer(self.scs, _nlayer)
+            f.change_layer(self.weapon.scs, _nlayer+1)
+
+        _xx, _yy = self.xx(), self.yy()
+        _chx = _xx - self.weapon.cross_xoffset
+        _chy = _yy - self.weapon.aim_position
         if self.profile["crosshair"]:
-            cx = self.xx()-self.weapon.cross_xoffset
-            cy = self.yy()-self.weapon.aim_position
-            _sc = self.cross
-            if _sc.rect.center != (cx, cy):
-                _sc.rect.center = cx, cy
-                _sc.dirty = 1
+            sprite_center(self.cross, (_chx, _chy))
 
         if self.profile["crosshair-info"]:
-            self.setup_crosshair_info()
+            if (self.weapon.ticks is 0 and self.weapon.state is 'Idle') or \
+                   self.weapon.state is 'Reload':
+                self.setup_crosshair_info()
+            sprite_center(self.cross_info, (_chx, _chy-MONEY_FONT_SIZE))
 
         if self.profile["money-info"]:
             _smir = self.money_info.rect
-            _nc = (self.xx()+2, self.yy()-18-MONEY_FONT_SIZE)
-            if _smir.center != _nc:
-                _smir.center = _nc
-                self.money_info.dirty = 1
+            _nc = (_xx + 2, _yy - 18 - MONEY_FONT_SIZE)
+            sprite_center(self.money_info, _nc)
 
     def has_weapon(self, wpnname):
         """Return True if player has WEAPON of WPNNAME."""
@@ -352,16 +363,13 @@ class Player(AnimateStates, Creature):
             self.pstats["weapons"][n] = wpn_empty_stats()
 
             # HEHE on AWP
-            if n == 'AWP':
+            if n is 'AWP':
                 play_sound("player/laugh1.wav")
 
             # Call weapon constructor
             nwpn = getattr(weapons, n)(self)
             self.weapons.append(nwpn)
             self.switch_weapon(nwpn)
-
-            if self.profile["show-hud"]:
-                self.hud.new_weapon(nwpn)
 
             return nwpn
 
@@ -390,6 +398,8 @@ class Player(AnimateStates, Creature):
 
         if self.profile["show-hud"]:
             self.hud.select_weapon(self.weapon)
+        if self.profile["crosshair-info"]:
+            self.setup_crosshair_info()
 
     def earn_money(self, amount):
         """Earn AMOUNT of money."""
@@ -402,9 +412,9 @@ class Player(AnimateStates, Creature):
 
             if self.profile["show-earned-money"]:
                 ea = EarnMoney(self.earned_money, self.x+2,
-                               self.y-22-MONEY_FONT_SIZE-EARNMONEY_FONT_SIZE,
+                               self.y-22-MONEY_FONT_SIZE,
                                font_color=self.profile["skin"])
-                self.field.add(ea)
+                self.field.add(ea, layer=TOP_LAYER)
 
             if self.profile["money-info"]:
                 self.setup_money_info()
@@ -447,7 +457,9 @@ class Player(AnimateStates, Creature):
 
             if cmd and cmd[0] == "/":
                 # Possible a console command
-                self.field.console.safe_send_command(cmd[1:])
+                _cons = self.field.console
+                _cons.locals["player"] = self
+                _cons.safe_send_command(cmd[1:])
             else:
                 self.say0("- Invalid command: %s"%cmd)
 
@@ -491,23 +503,32 @@ class Player(AnimateStates, Creature):
         if self.profile["show-hud"]:
             self.hud.update_kills(self.pstats["kills"])
 
+    def apply_niceshots(self, wpn):
+        """Apply all nice shots."""
+        if self.niceshot_n08 > 0:
+            if 'player' in option('debug'):
+                debug("Player: NICE SHOT! %d"%self.niceshot_n08)
+
+            # Earn some money for the nice shot
+            self.earn_money(10*self.niceshot_n08*self.field.level.num)
+
+            # Fill pstats before normalizing n08
+            _npshots = self.pstats["weapons"][wpn.name]["nice-shots"]
+            _npshots[0] += 1
+            _npshots[1] += self.niceshot_n08
+
+            play_sound("player/laugh%d.wav"%min(self.niceshot_n08, 8))
+
+            # Astonish some vitseal
+            vitses = self.field.creatures(Vits)
+            if vitses:
+                choice(vitses).nosa()
+
+            self.niceshot_n08 = 0
+
     def nice_shot(self, n08):
         """Notice a nice shot by the player."""
-        if 'player' in option('debug'):
-            debug("Player: NICE SHOT! %d"%n08)
-
-        # Fill pstats before normalizing n08
-        _npshots = self.pstats["weapons"][self.weapon.name]["nice-shots"]
-        _npshots[0] += 1
-        _npshots[1] += n08
-
-        if n08 > 8: n08 = 8
-        play_sound("player/laugh%d.wav"%n08)
-
-        # Astonish some vitseal
-        vitses = self.field.creatures(Vits)
-        if vitses:
-            choice(vitses).nosa()
+        self.niceshot_n08 += n08
 
     def nice_shot_projectile(self, prj):
         """Notice a nice shot by the player."""

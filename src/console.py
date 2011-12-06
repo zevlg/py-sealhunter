@@ -24,6 +24,7 @@ import pygame, sys
 from pygame.locals import *
 
 import textwrap                         # Used for proper word wrapping
+from itertools import ifilter
 from string import ascii_letters
 from code import InteractiveConsole     # Gives us access to the python interpreter
 
@@ -50,15 +51,20 @@ def bind(c, arg):
        Built-in commands: left, right, up, down, fire, reload, buy, switch"""
     sarg = arg.split(" ", 2)
     pidx, kcode = int(sarg[0]), key2keycode(sarg[1])
-    cmd = sarg[2]
-    
-    psetup = option("players")
-    psetup[pidx]["keys"][kcode] = cmd
+
+    plr = option("players")[pidx]
+    if len(sarg) < 3:
+        # print bound key
+        cmd = plr["keys"].get(kcode, "unbound")
+        c.message("%s: '%s' --> %s"%(plr["name"], sarg[1], cmd))
+        return
+
+    plr["keys"][kcode] = sarg[2]
 
     if 'f' not in c.locals:
         return
     fld = c.locals["f"]
-    fld.players[pidx].profile["keys"][kcode] = cmd
+    fld.players[pidx].profile["keys"][kcode] = sarg[2]
 
 def skin(c, arg):
     """/skin <player> <color> - Set skin for the player."""
@@ -101,11 +107,8 @@ def get_option(c, arg):
 
 def set_option(c, arg):
     """/set <optname> <value> - Set <optname> to <value>"""
-    k, v = arg.split()
-    if k == 'debug':
-        options()[k] = v.split()
-    else:
-        options()[k] = eval(v)
+    k, v = arg.split(" ", 1)
+    options()[k] = eval(v)
     get_option(c, k)
 
 def quit(c):
@@ -122,6 +125,12 @@ def screenshot(c, fn=None):
     c.message("+ Screenshot -> %s"%fn)
     pygame.image.save(pygame.display.get_surface(), fn)
 
+def clear_field(c):
+    """/clear - Clear blood and corpses from the field"""
+    if 'f' in c.locals:
+        c.locals['f'].clear_field('player' in c.locals)
+        c.orig_screen = pygame.display.get_surface().copy()
+
 def import_plugin(c, arg):
     """/import <plugin> - Import plugin."""
     # NOT YET
@@ -129,20 +138,26 @@ def import_plugin(c, arg):
 
 def exec_file(c, arg):
     """/exec <file> - Execute file with commands."""
-    def ws_and_comments(l):
-        l = l.lstrip()
-        if not l or l[0] == "#":
-            return False
-        return True
+    def not_comment(l):
+        _, line = l
+        line = line.lstrip()
+        return not line or line[0] != "#"
 
     with open(arg, "r") as f:
         lnum = 0
-        for l in f:
-            lnum += 1
-            if ws_and_comments(l):
-                err = c.safe_send_command(l[:-1])
-                if err:
-                    c.message("Error (%s) line=%d: %s"%(err.__class__, lnum, err))
+        for lnum, line in ifilter(not_comment, enumerate(f)):
+            line = line[:-1]            # strip \n
+            try:
+                if line and line[0] == "/":
+                    c.send_command(line[1:])
+                else:
+                    c.send_python(line)
+            except Exception as err:
+                c.message("Error (%s) line=%d: %s"%(err.__class__, lnum, err))
+
+##                err = c.safe_send_command(l[:-1])
+##                if err:
+##                    c.message("Error (%s) line=%d: %s"%(err.__class__, lnum, err))
 #        map(c.safe_send_command, filter(ws_and_comments, f))
 
 def echo(c, arg):
@@ -167,6 +182,12 @@ def level(c, arg):
     for i in range(ticks):
         fld.level.tick(fld)
 
+def newgame(c):
+    """/newgame - Start a new game."""
+    import sealhunter
+    psetup = option("players")
+    sealhunter.new_game(psetup[0]["name"], c)
+
 def help(c):
     """/help - Print available commands."""
     global commands
@@ -177,12 +198,15 @@ commands = {"fs":fullscreen, "get":get_option,
             "set":set_option, "quit":quit,
             "screenshot": screenshot,
             "wind":windowed, "bind":bind,
+            "clear":clear_field,
             "skin":skin, "alias":alias,
             "say": say, "level":level,
             "exec":exec_file, "echo":echo,
+            "newgame":newgame,
             "import":import_plugin,
             "help": help}
 
+    
 class Writable(list):
     line_pointer = -1
     def write(self, line):
@@ -345,7 +369,9 @@ class Console:
 
         # Draw console to parent screen
         # self.parent_screen.fill(self.txt_color_i, (self.rect.x-1, self.rect.y-1, self.size[WIDTH]+2, self.size[HEIGHT]+2))
-        pygame.draw.rect(self.parent_screen, self.txt_color_i, (self.rect.x-1, self.rect.y-1, self.size[WIDTH]+2, self.size[HEIGHT]+2), 1)
+        pygame.draw.rect(self.parent_screen, self.txt_color_i,
+                         (self.rect.x-1, self.rect.y-1, self.size[WIDTH]+2,
+                          self.size[HEIGHT]+2), 1)
         self.parent_screen.blit(self.bg_layer,self.rect)
 
     #######################################################################
@@ -390,7 +416,7 @@ class Console:
 
         if text: self.add_to_history(text)
         try:
-            if text[0] == "/":
+            if text and text[0] == "/":
                 self.send_command(text[1:])
             else:
                 self.send_python(text)
@@ -479,13 +505,17 @@ class Console:
 
     def handle_event(self, event):
         if event.type == KEYDOWN and event.key in CONSOLE_KEYS:
-            pic = pygame.display.get_surface().copy()
+            self.orig_screen = pygame.display.get_surface().copy()
             self.active = True
             while self.active:
                 self.process_input()
-                self.parent_screen.blit(pic, self.rect)
+                self.parent_screen.blit(self.orig_screen, self.rect)
                 self.draw()
                 pygame.display.flip()
+
+            # restore the screen
+            self.parent_screen.blit(self.orig_screen, self.rect)
+            pygame.display.flip()
 
     def process_input(self):
         '''\

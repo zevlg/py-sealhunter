@@ -10,10 +10,7 @@ import menu, field, console, levels, player, hud
 from misc import *
 from constants import *
 
-def start_sealhunter(config=None):
-    options_load()
-
-    # Initialize everything we need from pygame
+def init_pygame():
     pygame.mixer.pre_init(44100, -16, 2, 512)
     pygame.init()
     pygame.mixer.set_num_channels(32)
@@ -26,14 +23,17 @@ def start_sealhunter(config=None):
     pygame.display.set_caption('SealHunter v%s'%__version__)
     pygame.mouse.set_visible(0)
 
+def start_sealhunter(config=None):
+    options_load()
+
+    # Initialize everything we need from pygame
+    init_pygame()
+
     # Exec the given config
     cons = None
     if config:
         cons = setup_console()
         cons.send_command("exec %s"%config)
-
-#    new_game(["Clark Kent", "Peter Parker"], cons)
-#    return
 
     menu.menu_init()
     menu.do_mainmenu(cons)

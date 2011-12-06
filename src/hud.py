@@ -23,14 +23,16 @@ class Hud(DummyHud):
         self.y = 23 if self.id==1 else 480-48
         self.ihud = dirty_sprite()
         self.ihud._layer = 2*TOP_LAYER
-        self.ihud.image = load_texture("Misc/%sHUD.png"%self.hname).copy()
-        _sihi = self.ihud.image
+        _sihi = load_texture("Misc/%sHUD.png"%self.hname).copy()
+        sprite_image(self.ihud, _sihi)
 
         # Blit some stuff directly to ihud sprite
         woff = 25+4
         fcol = (200,200,200)
-#        font = load_font('default.ttf', 10)
-        font = pygame.font.SysFont("Sans", 10)
+        try:
+            font = load_font('default.ttf', 10)
+        except IOError:
+            font = pygame.font.SysFont("Sans", 10)
         for widx in range(1, len(WEAPON_NAMES)):
             price = WEAPONS[WEAPON_NAMES[widx]]["price"]
             pimg = font.render("$%d"%price, True, fcol)
@@ -46,7 +48,7 @@ class Hud(DummyHud):
         _sihi.blit(_mkf.render("$", True, _fcol), (550, 4))
         _sihi.blit(_mkf.render("Kills:", True, _fcol), (550, 23))
 
-        move_sprite(self.ihud, 0, self.y)
+        sprite_move(self.ihud, 0, self.y)
 
         self.hud_money = dirty_sprite()
         self.hud_money._layer = 2*TOP_LAYER+1
@@ -101,7 +103,10 @@ class Hud(DummyHud):
 
     def update_bullets(self, wpn):
         fcol = (200,200,200)
-        font = pygame.font.SysFont("Sans", 10)
+        try:
+            font = load_font('default.ttf', 10)
+        except IOError:
+            font = pygame.font.SysFont("Sans", 10)
         bimg = font.render("x%d"%wpn.bullets, True, (200,200,200))
         self.hud_bullets.image = bimg
         self.hud_bullets.rect = bimg.get_rect()
@@ -129,6 +134,7 @@ class Hud(DummyHud):
             self.hud_frame.rect.centerx = 30 + (widx-1)*54
         self.hud_frame.dirty = 1
 
+        self.new_weapon(wpn)
         self.update_bullets(wpn)
 
     def __del__(self):

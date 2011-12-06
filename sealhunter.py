@@ -49,4 +49,7 @@ def main():
       sealhunter.start_sealhunter(config)
 
 if __name__ == "__main__":
+   import psyco
+   psyco.full()
+
    main()

@@ -2,6 +2,7 @@
 
 from operator import methodcaller as method
 
+import copy
 import pygame
 from pygame.sprite import LayeredDirty
 
@@ -27,6 +28,16 @@ class Field(LayeredDirty):
 
         self.bg = load_texture("Misc/backdrop.png")
         self.ice = load_texture("Misc/ice.png", True)
+        self.ice_mask = pygame.mask.from_surface(self.ice)
+        self.ice_rects = [pygame.Rect(FLIMIT_WIDTH[0], FLIMIT_HEIGHT[0],
+                                      FLIMIT_WIDTH[1]-FLIMIT_WIDTH[0],
+                                      FLIMIT_HEIGHT[1]-FLIMIT_HEIGHT[0]),
+                          self.ice_mask.get_bounding_rects()[0]]
+        self.ice_gap_rect = pygame.Rect(270, 0, 66, 175)
+
+        if 'field' in option('debug'):
+            debug("FIELD: ice rects: %s"%self.ice_rects)
+
         self.start = pygame.Surface((640,480))
         self.start.blit(self.bg, (0, 0))
         self.start.blit(self.ice, (0, ICE_YOFFSET))
@@ -38,12 +49,21 @@ class Field(LayeredDirty):
         # System font, for messages and FPS
         self.sfont = load_font("default.ttf", 14)
 
+        # Decoration using Tree
+        if 'tree' in option("show"):
+            self.tree = pygame.sprite.DirtySprite()
+            sprite_image(self.tree, load_texture("Misc/tree.png", True))
+            sprite_move(self.tree, 100, 100)
+            self.add(self.tree, layer=100+60)
+
         # FPS drawer if needed
         if "fps" in option("show"):
-            self.fpsprite = pygame.sprite.DirtySprite()
+            self.fps = pygame.sprite.GroupSingle()
+            self.fps.add(pygame.sprite.DirtySprite())
+#            self.fpsprite = pygame.sprite.DirtySprite()
             self.update_fpsprite()
             # show FPS rate on top of everything
-            self.add(self.fpsprite, layer=TOP_LAYER*3)
+            self.add(self.fps, layer=TOP_LAYER)
 
         # Messages
         self.messages = []
@@ -54,19 +74,19 @@ class Field(LayeredDirty):
         self.msgs_offset = 0
         self.msgs_linesize = self.sfont.get_linesize()
         _ssh = self.msgs_linesize * option("max-messages")
-        self.msgs.image = pygame.Surface((640, _ssh))
-        move_sprite(self.msgs, 0, 71)
-        self.add(self.msgs, layer=-1)
+        sprite_image(self.msgs, pygame.Surface((640, _ssh)))
+        sprite_move(self.msgs, 0, 71)
+        self.add(self.msgs, layer=TOP_LAYER)
 
         # Sprite for level's progress
         self.lp_font = load_font('trebuc.ttf', 14)
         self.lp_font.set_bold(True)
 
         self.level_prgrs = pygame.sprite.DirtySprite()
-        self.level_prgrs.image = pygame.Surface((640, 20))
-        move_sprite(self.level_prgrs, 0, 0)
+        sprite_image(self.level_prgrs, pygame.Surface((640, 20)))
+        sprite_move(self.level_prgrs, 0, 0)
         self.level_prgrs.image.blit(self.bg, (0,0), self.level_prgrs.rect)
-        self.add(self.level_prgrs)
+        self.add(self.level_prgrs, layer=TOP_LAYER)
 
     def render_level_progress(self):
         # Render level's progress bar
@@ -89,11 +109,33 @@ class Field(LayeredDirty):
                 pygame.draw.rect(_slpi, _ccol, (9+_lsw, 4, _cw, 15))
             self.level_prgrs.dirty = 1
 
+    def render_bosses_progress(self):
+        """Render bosses life instead of level progress."""
+        _bsi = self.level_prgrs.image
+        _bsi.blit(self.bg, (0,0), self.level_prgrs.rect)
+#        _bsi.fill((0,0,0))
+        _bst = self.lp_font.render("Boss:", True, (255,255,255))
+        _bsi.blit(_bst, (3, 3))
+        _bstw = _bst.get_width()
+        _pbw = 640-15-_bstw
+        pygame.draw.rect(_bsi, (0,0,0), (8+_bstw, 3, _pbw, 17), 1)
+
+        _bosses = filter(lambda x: x.isboss, self.creatures(Enemy))
+        _clife = sum(map(lambda x: max(x.life,0), _bosses))
+        _slife = sum(map(lambda x: x.slife, _bosses))
+        _cko = 1.0*_clife/_slife if _slife else 0
+        _cw = int(_cko*(_pbw-2))
+        pygame.draw.rect(_bsi, (255,255,255), (9+_bstw, 4, _cw, 15))
+
+        # Mark it as dirty
+        self.level_prgrs.dirty = 1
+
     def update_fpsprite(self):
         ft = "FPS: %d, Objects: %d"% \
              (round(self.clock.get_fps()), len(self.objects))
-        self.fpsprite.image = self.sfont.render(ft, True, (0,0,0))
-        move_sprite(self.fpsprite, 0, 480-14)
+        sprite_image(self.fps.sprite, self.sfont.render(ft, True, (0,0,0)))
+        sprite_move(self.fps.sprite, 0, 480-14)
+        self.fps.sprite.dirty = 1
 
     def add(self, *args, **kwargs):
         """Add object O to field object list."""
@@ -123,6 +165,10 @@ class Field(LayeredDirty):
         # 0. Tick the field
         self.ticks += 1
 
+        if not self.players:
+            # Speed-up enemies
+            self.lockfps = FPS * 3
+
         # 1. Tick the level
         if self.level.finished:
             if self.level.num == 6:
@@ -135,10 +181,15 @@ class Field(LayeredDirty):
 
         if self.level.started:
             self.level.tick(self)
-        self.render_level_progress()
+
+        # 1.5) Render level (or bosses) progress
+        if self.level.seen_bosses:
+            self.render_bosses_progress()
+        elif self.ticks % 3 == 1:
+            self.render_level_progress()
 
         # 2. Tick all ticking objects
-        for to in self.objects:
+        for to in copy.copy(self.objects):
             to.tick(self)
 
         # 3. Remove deleted (while ticking) objects
@@ -167,6 +218,9 @@ class Field(LayeredDirty):
         self.clear(self.screen, self.field)
         urects = self.draw(self.screen)
         pygame.display.update(urects)
+##        self.fps.clear(self.screen, self.field)
+##        self.fps.draw(self.screen)
+##        pygame.display.update([pygame.Rect(0, 400, 200, 80)])#urects)
 
         # 7. Lock the frame rate
         if ENABLE_ACCURATE_FPS:
@@ -176,14 +230,27 @@ class Field(LayeredDirty):
 
         # DONE
 
+    def clear_field(self, flip_display=False):
+        "Remove all static objects from the field."
+        self.field.blit(self.start, (0,0))
+        self.screen.blit(self.field, (0,0))
+
+        # Mark all sprites as dirty to redraw them all
+        for s in self.sprites():
+            s.dirty = True
+
+        self.draw(self.screen, self.field)
+        if flip_display:
+            pygame.display.flip()
+
     def draw_field(self, surf, x, y):
 #        return
         # Update the field as well
         self.field.blit(surf, (x, y))
 
-        rec = (x,y)+surf.get_size()
-        self.screen.blit(self.field, (x, y), rec)
-        pygame.display.update(rec)
+#         rec = (x,y)+surf.get_size()
+#         self.screen.blit(self.field, (x, y), rec)
+#         pygame.display.update(rec)
 
     def draw_static(self, surf, x, y):
 #        return
@@ -227,16 +294,16 @@ class Field(LayeredDirty):
 
     def is_inside(self, x, y, toponly=False):
         """Return True if X,Y is inside the field."""
-        if x >= 640 or x < 0: return False
-        if not toponly:
-            if y > FLIMIT_HEIGHT[1]: return False
+        if self.ice_rects[0].collidepoint(x,y):
+            return True
+        elif self.ice_gap_rect.collidepoint(x,y):
+            # Hack to handle ice gap
+            xoff = x - self.ice_gap_rect.left
+            return y > 160 + xoff*0.272727
 
-        # Hack to handle ice gap
-        y -= ICE_YOFFSET
-        if x > 274 and x < 336 and y < 300:
-            y -= 0.3*(x-274)
-        return self.ice.get_rect().collidepoint(x,y) \
-               and self.ice.get_at((int(x),int(y)))[3] != 0
+        return (toponly or self.ice_rects[1].collidepoint(x,y)) \
+               and y < 480 \
+               and self.ice_mask.get_at((int(x), int(y-ICE_YOFFSET)))
 
     def creatures(self, *classes, **kwargs):
         """Return list of alive creatures here in the field."""
@@ -251,7 +318,7 @@ class Field(LayeredDirty):
         """Return list of players in the field."""
         return self.creatures(Player, all=True)
 
-    def game_is_over(self, by_enemy):
+    def game_is_over(self, by_enemy, force=False):
         # Update players stats
         for p in self.players:
             p.pstats["time"] = 1.0*self.ticks/FPS
@@ -265,8 +332,9 @@ class Field(LayeredDirty):
             for w in p.weapons:
                 wpnstats[w.name]["time"] = 1.0*w.usage_ticks/FPS
 
-        if option("debug"):
+        if not force and option("debug"):
             return
+
         self.game_over = True
         debug("Game Over! by %s"%by_enemy)
 
@@ -304,10 +372,11 @@ class Field(LayeredDirty):
 
         if event.type == QUIT or \
                (event.type == KEYUP and event.key == K_ESCAPE):
-            self.game_is_over(None)
+            self.game_is_over(None, force=True)
             return
 
         self.console.handle_event(event)
+
         for p in self.players:
             p.handle_event(event)
 

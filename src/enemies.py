@@ -103,6 +103,11 @@ class Enemy(AnimateStates, Creature):
         self.apply_position()
         self.update_reflection()
 
+        # Update the layer
+        # Changing layer is a heavy operation!
+        if abs(self.y - self.scs._layer) > 2:
+            f.change_layer(self.scs, self.y)
+
     def press_players(self, f):
         if not self.can_press: return
 
@@ -117,36 +122,23 @@ class Enemy(AnimateStates, Creature):
     def hit(self, prj, damage, head=False):
         """Enemy has been hited."""
         if 'enemy' in option("debug"):
-            debug("Enemy: Hit, damage=%d, totalhit=%d"
-                  %(damage,self.total_hit))
+            debug("Enemy: %s Hit, damage=%d, totalhit=%d, head=%d, life=%d"
+                  %(self, damage, self.total_hit,head, self.life))
 
-        if head and prj.is_bullet():
-            # Spill some blood particles
-            zv = self.y - prj.y
-            self.field.add(*blood(n=3, xrs=(-6,-5),zrs=(0,2),
-                                  w=(2,6), h=(1,3),
-                                  x=prj.x,y=self.y,z=zv))
+        # Spilt a blood on hit
+        if prj.is_bullet():
+            zrs = min(-prj.angle * 33, 8)
+            self.field.add(*blood(n=3, xrs=(-6,-3), zrs=(zrs-1, zrs+1),
+                                  w=(1,6), h=(1,3),
+                                  x=prj.x, y=self.y, z=self.y-prj.y))
+##        if head and prj.is_bullet():
+##            # Spill some blood particles
+##            zv = self.y - prj.y
+##            self.field.add(*blood(n=3, xrs=(-6,-5),zrs=(0,2),
+##                                  w=(2,6), h=(1,3),
+##                                  x=prj.x,y=self.y,z=zv))
 
         Creature.hit(self, prj, damage, head=head)
-
-        if self.isboss:
-            self.field.level.render_bosses()
-#            self.field.move_to_front(self.bsprite)
-
-    def gib_gen(self, *gibs):
-        _bloody = option("bloody")
-        _xrs = rand_speed(-7, -3)
-        _yrs = rand_speed(-0.5, 0.5)
-        _zrs = rand_speed(2, 4)
-        _blevel = 0
-        for gb in gibs:
-            _blevel += 1
-            gbn, gbz = gb
-            if _bloody > _blevel and \
-                   (_bloody > 3 or randint(0, max(4-_bloody,0)) == 0):
-                self.field.add(Particle(gbn, x=self.x, y=self.y, z=gbz,
-                                        x_speed=_xrs(), y_speed=_yrs(),
-                                        z_speed=_zrs()))
 
     def gib(self, sound=None):
         """Mark enemy as gibbed."""
@@ -154,7 +146,32 @@ class Enemy(AnimateStates, Creature):
         self.field.remove(self)
         play_sound(choice(aglob("misc/gib*.wav")))
 
-class Bruns(Enemy):
+class WithYSpeed:
+    def __init__(self, ykrange):
+        self.yrspee = rand_speed(*ykrange)
+        self.init_speeds(apply(rand_speed, self.speed_range)())
+
+    def init_speeds(self, speed=None, yk=None):
+        if speed is not None: self.speed = speed
+        if yk is None: yk = self.yrspee()
+
+        self.y_speed = yk*self.speed
+        self.x_speed = self.speed-abs(self.y_speed)
+
+    def ykoeff(self):
+        return 1.0*self.y_speed/self.speed
+
+    def correct_position(self, f, yk=None):
+        """Correct the position according to field's boundaries."""
+        fhlimit = f.level.rr
+        if self.y > fhlimit[1]:
+            self.y = fhlimit[1]
+            self.init_speeds(yk=yk)
+        elif self.y < fhlimit[0]:
+            self.y = fhlimit[0]
+            self.init_speeds(yk=yk)
+
+class Bruns(Enemy, WithYSpeed):
     __metaclass__ = MetaEnemy
     def __init__(self, **kwargs):
         # all numbers are VERY GOOD
@@ -215,29 +232,34 @@ class Bruns(Enemy):
             }
 
         Enemy.__init__(self, ss, **kwargs)
+        WithYSpeed.__init__(self, kwargs.get("ykrange", (-0.3, 0.3)))
 
-        self.x_speed = apply(rand_speed, self.speed_range)()
-        self.ticks_step = int((self.speed_range[1]+0.2)/self.x_speed)
+        self.ticks_step = int((self.speed_range[1]+0.2)/self.speed)
         self.meat_sounds = map(load_sound, aglob("misc/meat*.wav"))
 
     def hit(self, prj, damage, head=False):
         Enemy.hit(self, prj, damage, head=head)
 
-        if self.state == "Walking" and self.life <= 10 and \
-           prj.is_bullet() and not head:
+        if self.state == "Walking" and self.life <= 10 \
+               and prj.is_bullet() and not head:
             # Critical wound
             self.state_start("StartCrawl")
-            self.x_speed = self.y_speed = 0
+            self.init_speeds(0, 0)
 
     def tick(self, f):
         if self.is_alive() and self.total_hit > self.slife/2:
             # This is painfull for brunsal
             play_rnd_sound(self.pain_sounds)
 
-        if self.state == "StartCrawl" and \
-           self.state_idx == self.state_frames()-1:
+        if self.state == "Walking":
+            self.correct_position(f)
+            if self.ticks % randint(FPS/f.level.num, FPS) == 0:
+                self.init_speeds()
+
+        if self.state == "StartCrawl" \
+               and self.state_idx == self.state_frames()-1:
             self.state_start("Crawl")
-            self.x_speed = 0.2
+            self.init_speeds(0.2, 0)
         elif self.state == "Crawl" and \
                  self.state_ticks % randint(1, 20) == 0:
             # Draw a blood tray
@@ -269,9 +291,9 @@ class Bruns(Enemy):
                          (choice(tglob("Blood/Gib/SealPart*")), 4),
                          (choice(tglob("Blood/Gib/SealTorso*")), 8))
 
-            self.field.add(*blood(n=10, xrs=(-7,-3),zrs=(2,4),
-                                  yrs=(-0.5,0.5), w=(2,6), h=(1,3),
-                                  x=self.x, y=self.y, z=18))
+##            self.field.add(*blood(n=10, xrs=(-7,-3),zrs=(2,4),
+##                                  yrs=(-0.5,0.5), w=(2,6), h=(1,3),
+##                                  x=self.x, y=self.y, z=18))
 
             if choice([0,1,2]) == 1 and self.life < -200:
                 _pools = tglob("Blood/Splat/splat_*.png")
@@ -297,6 +319,10 @@ class Bruns(Enemy):
 
         play_rnd_sound(self.death_sounds)
 
+def BrunsLinear(**kwargs):
+    kwargs.update(ykrange=(0,0))
+    return Bruns(**kwargs)
+
 class Knubbs(Enemy):
     __metaclass__ = MetaEnemy
     def __init__(self, **kwargs):
@@ -304,10 +330,10 @@ class Knubbs(Enemy):
         ss = {
             "Walking": {
             "ticks_step": 3,
-            0:[(0, 20), (35,3), (40, 7)],
-            1:[(-2, 23), (33,6), (38, 10)],
-            2:[(-4, 24), (31,7), (36, 11)],
-            3:[(-2, 23), (33,6), (38, 10)]},
+            0:[(0, 20), (35,3), (41, 7)],
+            1:[(-2, 23), (33,6), (39, 10)],
+            2:[(-4, 24), (31,7), (37, 11)],
+            3:[(-2, 23), (33,6), (39, 10)]},
 
             "Death1": {
             "ticks_step": 3,
@@ -326,8 +352,8 @@ class Knubbs(Enemy):
 
             "Stopped": {
             "ticks_step":8,
-            0:[(0,20), (35,3), (40,7)],
-            1:[(0,20), (35,3), (40,7)]}}
+            0:[(0,20), (35,3), (41,7)],
+            1:[(0,20), (35,3), (41,7)]}}
 
         Enemy.__init__(self, ss, **kwargs)
         self.x_speed = self.speed_range[0]
@@ -358,24 +384,6 @@ class Knubbs(Enemy):
             elif self.life < self.slife:
                 # regenerate life
                 self.life += 1
-                if self.isboss:
-                    self.field.level.render_bosses()
-#                    self.field.move_to_front(self.bsprite)
-
-class WithYSpeed:
-    def __init__(self, ykrange):
-        self.yrspee = rand_speed(*ykrange)
-        self.init_speeds(apply(rand_speed, self.speed_range)())
-
-    def init_speeds(self, speed=None, yk=None):
-        if speed is not None: self.speed = speed
-        if yk is None: yk = self.yrspee()
-
-        self.y_speed = yk*self.speed
-        self.x_speed = self.speed-abs(self.y_speed)
-
-    def ykoeff(self):
-        return 1.0*self.y_speed/self.speed
 
 class Aktivist(Enemy, WithYSpeed):
     __metaclass__ = MetaEnemy
@@ -439,15 +447,9 @@ class Aktivist(Enemy, WithYSpeed):
 
         # Correct the position
         if self.is_alive():
-            fhlimit = self.field.level.rr
-            if self.y > fhlimit[1]:
-                self.y = fhlimit[1]
-                self.init_speeds()
-            elif self.y < fhlimit[0]:
-                self.y = fhlimit[0]
-                self.init_speeds()
+            self.correct_position(f)
 
-        if self.state == "RunningNoSeal":
+        if self.state is "RunningNoSeal":
             if self.state_idx == 6:
                 play_sound("aktivist/panic.wav")
             elif self.state_idx == 0 and self.state_ticks > 1:
@@ -459,19 +461,21 @@ class Aktivist(Enemy, WithYSpeed):
                 self.update()
                 self.apply_position()
                 self.update_reflection()
-            # spilt some blood
+            # spilt some blood while running w/o seal
             if self.state_ticks < 25 or randint(1,10)==10:
                 self.field.add(*blood(n=1, xrs=(-0.5,0),zrs=(-1,0.2),
                                       w=(2,4), h=(1,4),
                                       x=self.x+5,y=self.y,z=12))
 
-        if self.state == "Running" and self.ticks % FPS == 0:
+        if self.state is "Running" and self.ticks % FPS == 0:
             self.init_speeds()
 
         if not self.is_alive() and self.has_seal and self.state_idx == 5:
             # Drop the seal
             self.has_seal = False
-            f.add(Vits(x=self.x+4, y=self.y, field=f))
+            vits = Vits(x=self.x+4, y=self.y, field=f)
+            vits.scs._layer = self.scs._layer + 1
+            f.add(vits)
 
         if self.state == "Death2" and self.state_idx == 0:
             # Head-off death, so spilt some blood
@@ -492,14 +496,13 @@ class Aktivist(Enemy, WithYSpeed):
                 debug("Enemy: HEADSHOT!")
             self.fatal_projectile.headshoted_aktivist = True
 
-        seal_rect = Rect(self.x+4, self.y-13, 14, 7)
+        seal_rect = Rect(self.x+4, self.y-18, 14, 7)
         if 'enemy' in option("debug"):
             debug("Enemy: Aktivist seal_rect=%s, prj=%d/%d"
                   %(seal_rect, prj.x, prj.y))
 
         if self.has_seal and prj.is_bullet() \
-               and seal_rect.collidepoint(prj.x, prj.y) \
-               and (self.is_alive() or self.ticks < 6):
+               and seal_rect.collidepoint(prj.x, prj.y):
             self.has_seal = False
             self.can_leave_field = True
             if self.is_alive():
@@ -604,7 +607,7 @@ class Vits(Enemy):
         Creature.die(self, prj)
 
         if self.isboss:
-            # GIB for the boss
+            # always GIB for the boss
             self.life = -10*self.slife
 
         self.x_speed = 0
@@ -706,9 +709,9 @@ class Pingvin(Enemy, WithYSpeed):
                          (choice(tglob("Blood/Gib/PingvinTorso*")), 20),
                          (choice(tglob("Blood/Gib/Part*")), 8))
 
-            self.field.add(*blood(n=10, xrs=(-7,-3),zrs=(2,4),
-                                  yrs=(-0.5,0.5), w=(2,6), h=(1,3),
-                                  x=self.x, y=self.y, z=self.y-prj.y))
+##            self.field.add(*blood(n=10, xrs=(-7,-3),zrs=(2,4),
+##                                  yrs=(-0.5,0.5), w=(2,6), h=(1,3),
+##                                  x=self.x, y=self.y, z=self.y-prj.y))
             # GIB
             return Enemy.gib(self)
 
@@ -748,15 +751,9 @@ class Pingvin(Enemy, WithYSpeed):
             self.init_speeds(apply(rand_speed, self.glide_speeds)(),
                              self.ykoeff())
 
-        # Correct the position
         if self.is_alive():
-            fhlimit = self.field.level.rr
-            if self.y > fhlimit[1]:
-                self.y = fhlimit[1]
-                self.init_speeds(yk=-self.ykoeff())
-            elif self.y < fhlimit[0]:
-                self.y = fhlimit[0]
-                self.init_speeds(yk=-self.ykoeff())
+            # Bounce from the field boundaries
+            self.correct_position(f, yk=-self.ykoeff())
 
 class Bear(Enemy):
     __metaclass__ = MetaEnemy
@@ -830,19 +827,22 @@ class Bear(Enemy):
         self.x_speed = _ssr[0] + (_ssr[1]-_ssr[0])*((1-_lk)**2)
 
         if self.x_speed < 1:
-            self.state_ticks = 4
-        elif self.x_speed < 1.5:
-            self.state_ticks = 3
-        elif self.x_speed < 2:
-            self.state_ticks = 2
+            self.ticks_step = 4
+        elif self.x_speed < 1.75:
+            self.ticks_step = 3
         elif self.x_speed < 2.5:
-            self.state_ticks = 1
+            self.ticks_step = 2
         elif self.state != "Running":
             self.state_start("Running")
-            self.state_ticks = 1
-##            if self.x_speed < 3.5: self.state_ticks = 4
-##            elif self.x_speed < 4.5: self.state_ticks = 3
-##            else: self.state_ticks = 2
+            if self.x_speed < 3.5:
+                self.ticks_step = 4
+            elif self.x_speed < 4.5:
+                self.ticks_step = 3
+            elif self.x_speed < 5.5:
+                self.ticks_step = 2
+            else:
+                self.ticks_step = 1
+
         if 'enemy' in option("debug"):
             debug("Bear enraged: speed=%f, sticks=%d"
                   %(self.x_speed, self.state_ticks))
@@ -855,6 +855,7 @@ class Bear(Enemy):
 
 class Turtle(Enemy):
     __metaclass__ = MetaEnemy
+    KRIPER_TICKS = FPS * 2
     HURT_DAMAGE = 300
     def __init__(self, **kwargs):
         ss = {
@@ -890,7 +891,7 @@ class Turtle(Enemy):
         self.hide_damage = self.HURT_DAMAGE
 
     def hit(self, prj, damage, head=False):
-        """Creature has been hitted by projectile PRJ by DAMAGE.
+        """Turtle has been hitted by projectile PRJ by DAMAGE.
 If HEAD is True, then creature has been headshoted."""
         if "enemy" in option("debug"):
             debug("Enemy: TURTLE hit, prj=%s dmg=%d head=%s"
@@ -899,10 +900,31 @@ If HEAD is True, then creature has been headshoted."""
         if self.state == "KrypaIn" \
                or (not head and self.y - prj.y > 5):
             if prj.is_bullet():
+                prjenergy = prj.energy
                 prj.energy = 0
                 play_rnd_sound(aglob("padda/*.wav"))
                 hframes = 1 + min(int(damage/25), 2)
                 self.field.add(Ric(prj.x-1, prj.y, frames=hframes))
+
+                # Create ricocheted bullet with half energy of origin
+                if 'bullet' in option('debug'):
+                    debug("Bullet: ricco: y=%d, turtle=%s"
+                          %(prj.y, self.scs.rect))
+
+                _sry = self.scs.rect.top
+                if self.y - prj.y > 10:
+                    adeg = (_sry - prj.y)*3 + randint(-5,5)
+                    fy = _sry - 1
+                else:
+                    adeg = (self.y - prj.y)*3 + randint(-5,5)
+                    fy = self.y + 1
+                if adeg == 0:
+                    adeg = 1
+                fx = prj.x - int((fy-prj.y)/math.tan(adeg*math.pi/180))
+                rbul = Bullet(prj.weapon, self.field, adeg=adeg,
+                              fx=fx, fy=fy, ric=True)
+                rbul.energy = 1 + prjenergy / 2
+                prj.weapon.throw_bullets(self.field, [rbul])
 
             # Push the turtle back
             if self.state == "KrypaIn":
@@ -917,14 +939,23 @@ If HEAD is True, then creature has been headshoted."""
         self.x_speed = 0
         self.state_start("KrypaIn")
         self.hide_damage = Turtle.HURT_DAMAGE
-        self.kryperut_ticks = self.ticks + 100
+        self.kryperut_ticks = self.ticks + Turtle.KRIPER_TICKS
 
     def tick(self, f):
         Enemy.tick(self, f)
 
         if self.state == "KrypaIn":
             if self.ticks == self.kryperut_ticks:
-                self.state_start("KryperUt")
+                # Check that no player is aiming at the turtle
+                def player_aiming(p):
+                    ay = p.yy() - p.weapon.aim_position
+                    return ay > self.scs.rect.top and \
+                           ay < self.scs.rect.bottom
+
+                if any(filter(player_aiming, f.players)):
+                    self.kryperut_ticks += Turtle.KRIPER_TICKS
+                else:
+                    self.state_start("KryperUt")
             else:
                 self.apply_friction()
         elif self.state == "KryperUt" \
@@ -954,6 +985,7 @@ class Valross(Enemy):
             3:[(0,37),(31,0),(51,15)]},
 
             "Death": {
+            "ticks_step": 10,
             0:(0,37), 1:(0,37), 2:(0,37),
             3:(0,37), 4:(2,37), 5:(2,37),
             6:(2,37), 7:(2,37), 8:(2,37),

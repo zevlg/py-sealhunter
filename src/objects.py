@@ -1,7 +1,7 @@
 # Copyright (C) 2009 by Zajcev Evegny <zevlg@yandex.ru>
 
 import pygame, math
-from random import randint, choice
+from random import randint, choice, shuffle
 from operator import sub
 from os.path import basename
 
@@ -75,8 +75,9 @@ class SHobj:
 
     def is_quiescent(self):
         """Return True if object is in quiescent state."""
-        return self.x_speed == 0 and self.y_speed == 0 \
-               and self.z_speed == 0 and self.z == 0
+        # all speeds and z are zero
+        return self.x_speed == self.y_speed == \
+               self.z_speed == self.z == 0
 
 def setobjattrs(obj, kwargs, **defaults):
     """For OBJ set ANAMES attributes that are in KWA."""
@@ -140,10 +141,12 @@ class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
         self.scs._layer = self.y
         self.add(self.scs)
 
-    def __getattr__(self, attr):
-        if attr == "rect": return self.scs.rect
-        elif attr == "image": return self.scs.image
-        raise AttributeError
+        # Check the code that has been using this stuff
+        
+#     def __getattr__(self, attr):
+#         if attr == "rect": return self.scs.rect
+#         elif attr == "image": return self.scs.image
+#         raise AttributeError
 
 #     def __setattr__(self, attr, av):
 #         if attr == "rect": self.scs.rect = av
@@ -151,18 +154,29 @@ class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
 #         else: self.__dict__[attr] = av
 
     def update(self):
-        move_sprite(self.scs, self.xx(), self.yy())
+        sprite_move(self.scs, self.xx(), self.yy())
         self.update_reflection()
 
     def tick(self, f):
         self.apply_motion()
-        x, y = self.rect.center
+        x, y = self.scs.rect.center
         y += self.z
-        if (self.is_quiescent() and not self.can_stop) \
-               or not f.is_inside(x, y, self.field_bound_toponly):
+
+        # Update the layer
+#         if abs(self.y - self.scs._layer) > 2:
+#             f.change_layer(self.scs, self.y)
+
+        if not f.is_inside(x, y, self.field_bound_toponly):
             f.remove(self)
         else:
             self.update()
+
+        # Check object can be remove from the field
+#         if (self.is_quiescent() and not self.can_stop) \
+#                or (not f.is_inside(x, y, self.field_bound_toponly)):
+#             f.remove(self)
+#         else:
+#        self.update()
 
 class Animate(pygame.sprite.OrderedUpdates):
     def __init__(self, adir, **kwargs):
@@ -179,21 +193,23 @@ so you must manage scs.rect for yourself."""
 
         pygame.sprite.OrderedUpdates.__init__(self)
         setobjattrs(self, kwargs,
-                    loop=True, keep_last=False, ticks_step=2)
+                    loop=True, keep_last=False, ticks_step=2,
+                    reverse=False)
 
-        self.anim = load_animation(adir)
+        self.anim = load_animation(adir, subscolor=kwargs.get("subscolor", None))
+        if self.reverse:
+            self.anim.reverse()
         self.ticks = self.state = 0
 
-        self.scs.image = self.anim[self.state]
+        sprite_image(self.scs, self.anim[self.state])
         self.add(self.scs)
 
     def update(self):
-        self.scs.image = self.anim[self.state]
-        self.scs.dirty = 1
+        sprite_update(self.scs, self.anim[self.state])
 
     def draw_static(self, f):
         """Draw current animation at field's F static layer."""
-        f.draw_static(self.scs.image, self.scs.rect[0], self.scs.rect[1])
+        f.draw_static(self.scs.image, *self.scs.rect.topleft)
 
     def tick(self, f):
         self.ticks += 1
@@ -207,7 +223,8 @@ so you must manage scs.rect for yourself."""
             else:
                 self.state -= 1
                 f.remove(self)
-                if self.keep_last: self.draw_static(f)
+                if self.keep_last:
+                    self.draw_static(f)
                 return
         self.update()
 
@@ -223,10 +240,13 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
 
         self.states = dict([(basename(dr), load_animation(dr))
                             for dr in tglob(dir+"/*")])
+        self.masks = dict([(basename(dr), load_animation_mask(dr))
+                           for dr in tglob(dir+"/*")])
         self.state = start_state
         self.state_idx = self.state_ticks = 0
         self.state_baseline = self.states_setup[self.state]
 
+        sprite_image(self.scs, self.states[self.state][0])
         self.update()
         self.add(self.scs)
 
@@ -263,20 +283,9 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
             else:
                 self.state_idx = 0
 
-    def state_blhb(self):
-        return self.state_baseline[self.state_idx]
-
-        _sset = self.states_setup
-        _ss = self.state
-        _si = self.state_idx
-        if _sset.has_key(_ss) and _sset[_ss].has_key(_si):
-            return _sset[_ss][_si]
-#        debug("- Object %s state=%s, sidx=%d does not have blhb"%(self, _ss, _si))
-        return None
-
     def state_baselines(self):
         """Return tuple of (x-baseline, y-baseline) position."""
-        blhb = self.state_blhb()
+        blhb = self.state_baseline[self.state_idx]
         if not blhb: return 0,0
         if type(blhb) is tuple:
             return blhb
@@ -284,7 +293,7 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
 
     def state_headrect(self):
         """Return head's rectangle, None if there is no head."""
-        blhb = self.state_blhb()
+        blhb = self.state_baseline[self.state_idx]
         if not blhb or type(blhb) is tuple:
             return None
         _ht, _hb = blhb[1:]
@@ -294,25 +303,22 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
 
     def update_reflection(self):
         """Take into account baselines, when updating reflections."""
-        MovingObj.update_reflection(self)
         if self.reflection:
-            _, yo = self.state_baselines()
+            MovingObj.update_reflection(self)
+            _, yo = self._state_baselines
             self.scrfs.rect.y -= 2*(self.scs.rect.h-yo-1)
-
-    def apply_state_setup(self):
-        """Apply baseline offsets to sprite's rectangle."""
-        xo, yo = self.state_baselines()
-        self.scs.rect.x -= xo
-        self.scs.rect.y -= yo
-        self.update_reflection()
 
     def apply_position(self):
         """Move sprite to its display position, aplying baseline offsets."""
-        move_sprite(self.scs, self.xx(), self.yy())
-        self.apply_state_setup()
+        _xx, _yy = self.xx(), self.yy()
+        _xo, _yo = self._state_baselines
+        sprite_move(self.scs, _xx - _xo, _yy - _yo)
+        self.update_reflection()
 
     def update(self):
-        self.scs.image = self.states[self.state][self.state_idx]
+        sprite_update(self.scs, self.states[self.state][self.state_idx])
+        self.mask = self.masks[self.state][self.state_idx]
+        self._state_baselines = self.state_baselines()
 
     def tick(self, f):
         self.state_ticks += 1
@@ -322,44 +328,20 @@ class AnimateStates(pygame.sprite.OrderedUpdates):
             self.update()
 
     def is_headshot(self, prj):
-        """Return True if projectile PRJ hits a HEAD."""
-        # Head shot if PRJ hits either A or B segments of head boundary
-        #        +-----------+
-        #        |           | __/
-        #        |         __*<----- hit
-        #       A|      __/  |B
-        #        |  ___/     |
-        #        +-/---------+
-        #
-        #        +--/--------+
-        #        | /         |
-        #       A|/          |
-        # hit--> *           |B
-        #       /|           |
-        #        +-----------+
+        """Return True if projectile PRJ hits the HEAD."""
         _hr = self.state_headrect()
         if not _hr:
             return False
         elif prj.is_bullet():
-            if 'weapon' in option('debug'):
-                debug("%s is_headshot: prj.x/y=%d/%d, rect=%s"%
-                      (repr(self), prj.x, prj.y, repr(_hr)))
             return _hr.collidepoint(prj.x, prj.y)
 
-        # PRJ is flunk rocket or grenade
+        # PRJ is a flunk rocket or grenade
         _exp = prj.explosion
         return _exp.distance_to_epi(_hr) <= _exp.splash_radius
-##        if ht and hb and prj.is_bullet():
-##            x, y = self.scs.rect.x, self.scs.rect.y
-##            ht = (ht[0]+x, ht[1]+y)
-##            hb = (hb[0]+x, hb[1]+y)
-##            def inr(y): return y >= ht[1] and y <= hb[1]
-##            return inr(prj.bully(hb[0])) and inr(prj.bully(ht[0]))
-##        return False
 
     def is_dead_state(self):
         """Return True if object is in dead state."""
-        return self.state[:5] == "Death"
+        return self.state.startswith("Death")
 
 class AnimateObj(Animate, MovingObj):
     def __init__(self, adir, **kwargs):
@@ -391,8 +373,10 @@ class AnimateObj(Animate, MovingObj):
 
         Animate.tick(self, f)
         MovingObj.tick(self, f)
-        if self.is_quiescent():
-            if self.keep_last: self.draw_static(f)
+        if self.is_quiescent() and not self.can_stop:
+            f.remove(self)
+            if self.keep_last:
+                self.draw_static(f)
             return
 
         self.update_ao()
@@ -406,7 +390,7 @@ class FallingClip(MovingObj):
         cpref = "Misc/%sClip/%sclip"%(cname,cname.lower())
         self.textures = map(load_texture, tglob("%s_*.png"%cpref))
 
-        self.scs.image = load_texture(choice(tglob("%s_falling*.png"%cpref)))
+        sprite_image(self.scs, load_texture(choice(tglob("%s_falling*.png"%cpref))))
         self.update()
 
     def tick(self, f):
@@ -470,7 +454,7 @@ NAME can be one of:
 def AnimateOnce(adir, x, y, **kwargs):
     kwargs.update(loop=False)
     a = Animate(adir, **kwargs)
-    move_sprite(a.scs, x, y)
+    sprite_move(a.scs, x, y)
     return a
 
 class Muzzle(Animate, WithReflection):
@@ -507,12 +491,12 @@ class EarnMoney(pygame.sprite.DirtySprite):
                     font=load_font("default.ttf", EARNMONEY_FONT_SIZE),
                     font_color=(255,0,0))
 
-        self.x, self.y = x, y
         self.ticks = 0
-        self.image = self.font.render("%d$"%amount, False, self.font_color).convert()
-        self.x -= self.image.get_width()/2
-        self.image.set_alpha(100)
-        move_sprite(self, x, y)
+        _mi = self.font.render("%d$"%amount, False, self.font_color).convert()
+        _mi.set_alpha(100)
+        
+        sprite_image(self, _mi)
+        sprite_center(self, (x, y))
 
     def tick(self, f):
         self.ticks += 1
@@ -522,8 +506,8 @@ class EarnMoney(pygame.sprite.DirtySprite):
 
         ia = self.image.get_alpha()
         self.image.set_alpha(ia-2)
-        self.y -= 1
-        move_sprite(self, self.x, self.y)
+        self.rect.top -= 1
+        self.dirty = 1
 
 
 # Projectile stuff
@@ -545,7 +529,10 @@ class Explosion(Animate):
         # Special for splat
         self.anim[len(self.anim)-1].set_alpha(50)
 
-        self.scs._layer = TOP_LAYER
+        if 'bullet' in option("debug"):
+            self.splash = None
+
+        self.scs._layer = MID2_LAYER
         self.x, self.y = x + 4, y + 6
         self.update()
 
@@ -568,15 +555,12 @@ class Explosion(Animate):
 
     def splash_collides(self, creatures):
         """Return creatures list for whom explosion splash collides."""
-##        # Draw splash rectangles
-##        srects = self.splash_rectangles(self.radius)
-##        def draw_rect(r):
-##            s = pygame.Surface(r.size)
-##            s.fill((0,0,0,0))
-##            self.projectile.player.field.draw_static(s, *r.topleft)
-##        map(draw_rect, srects)
         _crects = map(lambda o: o.scs.rect, creatures)
         _ssrsr = self.splash_rectangles(self.radius)
+
+        if 'bullet' in option("debug"):
+            self.splash.set_rectangles(self.x, self.y, int(self.radius))
+
         return map(lambda i: creatures[i],
                    set.union(*[set(sr.collidelistall(_crects))
                                for sr in _ssrsr]))
@@ -594,7 +578,7 @@ class Explosion(Animate):
     def apply_hits(self, f):
         """Apply explosion hits to all the creatures."""
         self.radius += self.radius_inc
-        nhcreatures = list(set(f.creatures())-self.hited_creatures)
+        nhcreatures = list(set(f.creatures()) - self.hited_creatures)
         for hc in self.splash_collides(nhcreatures):
             # NOTE: dd must be positive!
             dd = abs(self.splash_radius-self.distance_to_epi(hc.scs.rect))
@@ -610,26 +594,28 @@ class Explosion(Animate):
         _ss.rect.center = (self.x,self.y)
 
     def tick(self, f):
+        if 'bullet' in option("debug") and not self.splash:
+            self.splash = ExplosionSplash()
+            f.add(self.splash)
+        
         if self.ticks < 8:
             self.apply_hits(f)
         elif self.ticks == 8:
-            self.projectile.done_hits()
-
-            _spp = self.projectile.player
-            map(lambda cr: _spp.earn_money(cr.bounty),
-                filter(lambda cr: not cr.is_alive(), self.hited_creatures))
-            _spp.apply_earned_money()
+            # done
+            kills = filter(lambda cr: not cr.is_alive(), self.hited_creatures)
+            self.projectile.weapon.apply_bullets([self.projectile], kills)
 
         Animate.tick(self, f)
 
 class Projectile:
     def __init__(self, weapon):
         self.weapon = weapon
-        self.player = weapon.player
         self.energy = weapon.damage
         self.given_damage = 0
 
-        self.headshots = 0
+        # List of creatures that has been headshoted
+        self.headshots = []
+        # True if it was nice shot by this projectile
         self.niceshot = False
 
     def is_grenade(self):
@@ -642,35 +628,22 @@ class Projectile:
 
     def hit_creature(self, hc, dmg):
         """Hit creature HC by the projectile with base damage DMG."""
+        _player = self.weapon.player
+        _wpnstats = _player.pstats["weapons"][self.weapon.name]
         _ishs = hc.is_headshot(self)
         if _ishs:
-            self.player.pstats["weapons"][self.weapon.name]["headshots"] += 1
-            self.headshots += 1
+            _wpnstats["headshots"] += 1
+            self.headshots.append(hc)
             dmg *= hc.headshot_multiplier
             # Earn bonus money for the headshot accuracy
-            self.player.earn_money(hc.headshot_bonus)
+            _player.earn_money(hc.headshot_bonus)
 
-        dmg += self.weapon.damage_inc * (self.player.field.level.num-1)
+        dmg += self.weapon.damage_inc * (_player.field.level.num-1)
         self.given_damage += dmg
         # Update player's stats
-        self.player.pstats["weapons"][self.weapon.name]["damage"] += dmg
+        _wpnstats["damage"] += dmg
 
         hc.hit(self, dmg, head=_ishs)
-
-    def done_hits(self):
-        """Projectile done hitting creatures."""
-        if self.given_damage > self.weapon.damage*4:
-            if 'weapon' in option('debug'):
-                debug("WPN: huge damage by proj: %d!"%self.given_damage)
-            self.niceshot = True
-            self.player.nice_shot_projectile(self)
-        elif self.weapon.__class__.__name__ == 'AWP' \
-                 and self.headshots > 1:
-            # Double headshot from AWP is a nice shot!
-            if 'weapon' in option('debug'):
-                debug("WPN: %d headshots from AWP!"%self.headshots)
-            self.niceshot = True
-            self.player.nice_shot(self.headshots)
 
 class Grenade(Projectile, AnimateObj):
     def __init__(self, weapon, **kwargs):
@@ -689,8 +662,25 @@ class Grenade(Projectile, AnimateObj):
         AnimateObj.tick(self, f)
         if self.is_quiescent() or self.ticks == FPS:
             f.remove(self)
-            exp = Explosion(self, self.xx(), self.yy())
-            f.add(exp)
+            f.add(Explosion(self, self.xx(), self.yy()))
+            return
+
+        # Detect a collision with huge creatures
+        # Greanades bounces from them
+        import enemies
+        _hugecrts = f.creatures(enemies.Knubbs, enemies.Bear, enemies.Turtle)
+        crects = map(lambda o: o.scs.rect, _hugecrts)
+        collis = self.scs.rect.collidelist(crects)
+        if collis != -1:
+            _crect = crects[collis]
+            if self.xx() > _crect.x + _crect.width*3/4:
+                if self.x_speed < 0:
+                    self.x_speed = -self.x_speed*0.6
+                if self.z_speed < 0:
+                    self.z_speed = -self.z_speed*0.6
+            else:
+                self.x_speed = self.x_speed*0.6
+                self.z_speed = -self.z_speed*0.6
 
 class FlunkRocket(Projectile, AnimateObj):
     def __init__(self, weapon, **kwargs):
@@ -715,32 +705,55 @@ class FlunkRocket(Projectile, AnimateObj):
         return self.scs.rect.collidelist(crects) != -1
 
 class Bullet(Projectile):
-    def __init__(self, weapon, field):
+    def __init__(self, weapon, field, **kwargs):
         Projectile.__init__(self, weapon)
-        self.field = field
 
         # Get random angle according to accuracy_angle
+        # if 'adeg' is not given in kwargs
         waa = int(1000.0*self.weapon.accuracy_angle)
-        adeg = randint(-waa, waa)/1000.0
-        self.angle = math.sin(adeg*math.pi/180)
+        adeg = kwargs.get("adeg", randint(-waa, waa)/1000.0)
+        self.angle = math.tan(adeg*math.pi/180)
 
         # Fire starts here
-        self.fx = int(self.player.xx() - self.weapon.wpn_position[0])
-        self.fy = int(self.player.yy() - self.weapon.aim_position)
+        pfx = int(weapon.player.xx() - weapon.wpn_position[0])
+        pfy = int(weapon.player.yy() - weapon.aim_position)
+        self.fx = kwargs.get("fx", pfx)
+        self.fy = kwargs.get("fy", pfy)
 
         # Draw bullet tray
         if "bullets" in option("show"):
             _sb = self.bully
-            x0, x1 = randint(0,self.fx), randint(0,self.fx)
-            field.add(BulletTray((x0,_sb(x0)), (x1,_sb(x1))))
+            if 'bullet' in option("debug"):
+                x0, x1 = 0, self.fx
+            else:
+                x0, x1 = randint(0,max(self.fx,1)), randint(0,max(self.fx,1))
+            field.add(BulletTray((x0,_sb(x0)), (x1,_sb(x1)),
+                                 ric=kwargs.get("ric")))
 
     def bully(self, bx):
         """Calculate bullet's y according to bullet's x BX."""
         return self.fy + int((self.fx-bx)*self.angle)
 
+    def bullx(self, by):
+        return self.fx + int((self.fy-by)/self.angle)
+
     def collide(self, creature):
         """Return tuple of creature and hitpoint
 if bullet collides CREATURE."""
+        # Bullet hits if either its tray intersects A or B segment
+        #        +-----------+
+        #        |           | __/
+        #        |         __*<----- hit
+        #       A|      __/  |B
+        #        |  ___/     |
+        #        +-/---------+
+        #
+        #        +--/--------+
+        #        | /         |
+        #       A|/          |
+        # hit--> *           |B
+        #       /|           |
+        #        +-----------+
         def crpos(rp):
             if rp[1] > self.bully(rp[0]): return 1
             else: return -1
@@ -752,12 +765,12 @@ if bullet collides CREATURE."""
             return False
 
         # Check precisely using creature's mask
-        cm = pygame.mask.from_surface(creature.scs.image)
         xoff, yoff = _cr.topleft
         sx = min(_cr.right, self.fx)
+        _cm = creature.mask
         while sx > xoff:
             sy = self.bully(sx)
-            if _cr.collidepoint(sx, sy) and cm.get_at((sx-xoff,sy-yoff)):
+            if _cr.collidepoint(sx, sy) and _cm.get_at((sx-xoff,sy-yoff)):
                 return (creature, (sx,sy))
             # Step by 2 pixels to speed things up a little
             sx -= 2
@@ -777,30 +790,64 @@ if bullet collides CREATURE."""
 
             self.hit_creature(hc, self.energy)
 
+            if 'weapon' in option("debug"):
+                debug("WPN: Hit %s (hp=%d/%d), energy=%d, head=%d (%s), life=%d/%d"
+                      %(hc, self.x, self.y, self.energy,
+                        hc.is_headshot(self), hc.state_headrect(), hc.life, hc.slife))
+
             # Decrease bullet's energy according to pierce
             self.energy *= self.weapon.pierce
-        self.done_hits()
 
 class BulletTray(pygame.sprite.DirtySprite):
     """Class for momentary bullet trays.
 Bullet tray is simply momentary yellow line on the screen."""
-    def __init__(self, start, end, color=(255,255,0)):
+    def __init__(self, start, end, color=(255,255,0), ric=False):
+        self.ric = ric
         pygame.sprite.DirtySprite.__init__(self)
-        self.image = pygame.Surface((abs(end[0]-start[0]),
-                                     abs(end[1]-start[1])+1))
-
-        ck = (0,0,0)
-        self.image.fill(ck)
-        self.image.set_colorkey(ck)
-        self.image.set_alpha(BULLET_OPAQUE)
+        _bti = pygame.Surface((abs(end[0]-start[0]), abs(end[1]-start[1])+1))
+        make_transparent(_bti, (0,0,0))
+        _bti.set_alpha(BULLET_OPAQUE)
+        sprite_image(self, _bti)
+        self._layer = MID_LAYER
 
         x, y = map(min, zip(end, start))
         pygame.draw.line(self.image, color, (start[0]-x,start[1]-y),
                          (end[0]-x,end[1]-y))
-        move_sprite(self, x, y)
+        sprite_move(self, x, y)
+        if 'bullet' in option('debug'):
+            self.ticks = 0
 
     def tick(self, f):
-        f.remove(self)
+        if 'bullet' in option('debug'):
+            self.ticks += 1
+            if self.ticks > 50:
+                f.remove(self)
+        elif not self.ric:
+            f.remove(self)
+        else:
+            self.ric = False
+
+class ExplosionSplash(pygame.sprite.DirtySprite):
+    def __init__(self):
+        pygame.sprite.DirtySprite.__init__(self)
+
+        self.set_rectangles(0,0,0)
+        self.ticks = 0
+        self._layer = 0
+
+    def set_rectangles(self, x,y,r):
+        self.rect = pygame.Rect(x-r, y-r, 2*r, 2*r)
+        self.image = pygame.Surface(self.rect.size)
+        make_transparent(self.image, (255,255,0))
+        color = (200,200,100)
+        pygame.gfxdraw.filled_circle(self.image, r,r,r, color)
+
+        self.dirty = 1
+
+    def tick(self, f):
+        self.ticks += 1
+        if self.ticks > 50:
+            f.remove(self)
 
 class Creature(MovingObj):
     """Generic class for creatures."""
@@ -850,6 +897,25 @@ If HEAD is True, then creature has been headshoted."""
             from copy import copy
             self.fatal_projectile = copy(prj)
 
+    def gib_gen(self, *gibs, **kwargs):
+        _bloody = option("bloody")
+        _xrs = rand_speed(-7, -3)
+        _yrs = rand_speed(-0.5, 0.5)
+        _zrs = rand_speed(2, 4)
+        _blevel = 0
+        gibs_list = list(gibs)
+        shuffle(gibs_list) 
+        for gb in gibs_list:
+            gbn, gbz = gb
+            if _bloody > _blevel: # and \
+#                   (_bloody > 3 or randint(0, max(4-_bloody,0)) == 0):
+                self.field.add(Particle(gbn, x=self.x, y=self.y, z=gbz,
+                                        _layer = MID_LAYER,
+                                        x_speed=_xrs(), y_speed=_yrs(),
+                                        z_speed=_zrs(),
+                                        **kwargs))
+            _blevel += 1
+
     def die(self, prj):
         self.is_dying = True
 
@@ -868,12 +934,12 @@ class GenHit(Animate):
         Animate.__init__(self, name, loop=False, ticks_step=2)
         self.anim = self.anim[:frames]
         self.x, self.y = x, y
-        self.scs._layer = TOP_LAYER
+        self.scs._layer = MID2_LAYER
         self.update()
 
     def update(self):
         Animate.update(self)
-        move_center(self.scs, self.x, self.y)
+        sprite_center(self.scs, (self.x, self.y))
 
 def Hit(x, y, frames):
     return GenHit("Blood/Hit", x, y, frames)
@@ -893,7 +959,6 @@ class Particle(AnimateObj):
 class BloodParticle(MovingObj):
     def __init__(self, w, h, **kwargs):
         kwargs.update(reflection="blood" in option("reflections"))
-        kwargs.update(keep_last=True)
         MovingObj.__init__(self, **kwargs)
 
         self.drip_sounds = map(load_sound, aglob("misc/drip*.wav"))
@@ -902,8 +967,14 @@ class BloodParticle(MovingObj):
         self.x_fric = self.y_fric = 100
         self.bouncing = 100
 
-        self.scs.image = gen_blood(w, h)
-        move_sprite(self.scs, self.x, self.y)
+        # correct the speed to form something like
+        self.x_speed += abs(self.y_speed)
+
+        self.scs._layer = MID2_LAYER
+        sprite_image(self.scs, gen_blood(w, h))
+        sprite_move(self.scs, self.x, self.y)
+
+        self.ticks = 0
 
     def tick(self, f):
         MovingObj.tick(self, f)
@@ -911,17 +982,66 @@ class BloodParticle(MovingObj):
             if option('blood-sound'):
                 play_rnd_sound(self.drip_sounds)
 
-            _ss = self.scs
-            f.draw_blood(_ss.image, _ss.rect.x, _ss.rect.y)
+            f.remove(self)
+            f.draw_blood(self.scs.image, *self.scs.rect.topleft)
+
+class BloodFountain(pygame.sprite.OrderedUpdates, WithReflection):
+    """Create fast blood fountains."""
+    def __init__(self, **kwargs):
+        if hasattr(self, "scs"): self.scs.kill()
+        else: self.scs = dirty_sprite()
+
+        pygame.sprite.OrderedUpdates.__init__(self)
+        WithReflection.__init__(self, **kwargs)
+
+        _xrs = apply(rand_speed, kwargs.get("xrs", (-1,1)))
+        _yrs = apply(rand_speed, kwargs.get("yrs", (-0.3, 0.3)))
+        _zrs = apply(rand_speed, kwargs.get("zrs", (2, 6)))
+        _bw, _bh = kwargs.get("w", (2,4)), kwargs.get("h", (1,3))
+        _n = kwargs.get("n", 10)*option("bloody")+1
+
+        self.bloods = [BloodParticle(apply(randint, _bw),
+                                     apply(randint, _bh),
+                             x_speed=_xrs(), y_speed=_yrs(), z_speed=_zrs(),
+                             **dict([(k,kwargs[k]) for k in ["x", "y", "z"]]))
+                             for _ in xrange(_n)]
+
+        self.update()
+
+    def update(self):
+        _left, _right, _top, _bottom = 100000, 0, 10000, 0
+        for o in self.bloods:
+            (ole, oto), (ori, obo) = o.rect.topleft, o.rect.bottomright
+            if ole < _left:   _left = ole
+            if ori > _right:  _right = ori
+            if oto < _top:    _top = oto
+            if obo > _bottom: _bottom = obo
+
+        debug("bloods=%d: left=%d, right=%d, top=%d, bottom=%d"%
+              (len(self.bloods), _left, _right, _top, _bottom))
+        self.scs.rect = pygame.Rect(_left, _top, _right-_left, _bottom-_top)
+
+        _simg = pygame.Surface(self.scs.rect.size)
+        make_transparent(_simg)
+        # blit the blood particles to the image
+        for o in self.bloods[:10]:
+            _simg.blit(o.scs.image, (o.scs.rect.left-_left,
+                                     o.scs.rect.right-_right))
+        sprite_image(self.scs, _simg)
+#        self.scs.image.fill((255,0,0))
+
+    def tick(self, f):
+        for o in self.bloods:
+            o.tick(f)
 
 class SparkParticle(MovingObj):
     def __init__(self, w, h, **kwargs):
         MovingObj.__init__(self, **kwargs)
         self.ticks = 0
 
-        self.scs.image = gen_blood(2, 2, color="yellow")
-        self.scs._layer = TOP_LAYER
-        move_sprite(self.scs, self.x, self.y)
+        self.scs._layer = MID2_LAYER
+        sprite_image(self.scs, gen_blood(2, 2, color="yellow"))
+        sprite_move(self.scs, self.x, self.y)
 
     def tick(self, f):
         self.ticks += 1
@@ -929,42 +1049,6 @@ class SparkParticle(MovingObj):
             f.remove(self)
             return
         MovingObj.tick(self, f)
-
-class ObjectsGroup(pygame.sprite.DirtySprite):
-    def __init__(self, **kwargs):
-        pygame.sprite.DirtySprite.__init__(self)
-        self.objects = []
-
-    def add(self, o):
-        self.objects.extend(o)
-
-    def remove(self, *o):
-        map(self.objects.remove, o)
-
-    def render(self):
-        """Render all the objects."""
-        # determine size
-        minxy, maxxy = (640,480), (0, 0)
-        for o in self.objects:
-            _osr = o.scs.rect
-            minxy = map(min, _osr.topleft, minxy)
-            maxxy = map(max, _osr.bottomright, maxxy)
-
-        debug("OG: minxy=%s, maxxy=%s"%(repr(minxy), repr(maxxy)))
-        self.image = pygame.Surface(map(sub, maxxy, minxy))
-        for o in self.objects:
-            _os = o.scs
-            debug("OG: topleft = %s"%(repr(_os.rect.topleft)))
-            self.image.blit(_os.image, map(sub, _os.rect.topleft, minxy))
-
-        move_sprite(self, *minxy)
-
-    def tick(self, f):
-        map(lambda o: o.tick(f), self.objects)
-        self.render()
-#        print "qqq = %s"%map(lambda o: o.is_quiescent(), self.objects)
-        if all(map(lambda o: o.is_quiescent(), self.objects)):
-            f.remove(self)
 
 def blood_particles(**args):
     """Generate bunch of blood particles."""
@@ -978,6 +1062,7 @@ def blood_particles(**args):
                          **dict([(k,args[k]) for k in ["x", "y", "z"]]))
            for _ in xrange(_n)]
     return bps
+
     og = ObjectsGroup()
     og.add(bps)
     og.render()
