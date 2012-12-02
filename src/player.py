@@ -1,6 +1,7 @@
 # Copyright (C) 2009 by Zajcev Evegny <zevlg@yandex.ru>
 
 from itertools import *
+from random import randint
 
 import pygame
 
@@ -8,7 +9,7 @@ import weapons
 from objects import *
 from constants import *
 from misc import *
-from enemies import Bruns, Vits
+from enemies import Enemy, Bruns, Vits
 from hud import hud
 
 def wpn_empty_stats():
@@ -225,7 +226,7 @@ class Player(AnimateStates, Creature):
                 return filter(is_crawling, self.field.creatures(Bruns))
 
             crbruns = crawling_brunsals()
-            csix = self.rect.collidelistall(map(lambda c: c.rect, crbruns))
+            csix = self.scs.rect.collidelistall(map(mvo_rect, crbruns))
             for ci in csix:
                 self.earn_money(crbruns[ci].bounty)
                 self.kills(crbruns[ci])
@@ -555,6 +556,79 @@ class Player(AnimateStates, Creature):
             # Bullet
             if prj.x > self.x: self.x_speed -= ek
             else: self.x_speed += ek
+
+class AIPlayer(Player):
+    """Player driven by dummy AI."""
+    def __init__(self, **kwargs):
+        # Create a profile for the bot
+        _names = {0:"Kiddie", 1:"Zombie"}
+        self.ailevel = kwargs.get('ailevel', 3)
+        self.flood = kwargs.get('messages', True)
+        _autobuy = ["Magnum", "MAC10", "M4", "Minigun"]
+        _botname = _names.get(self.ailevel, "Urod")
+        _botskin = (randint(0, 255), randint(0,255), randint(0,255))
+        _botpos = (randint(500, 638), randint(190, 400))
+        _profile = {"name": _botname, "enabled": False,
+                    "skin": _botskin, "hud-position": (0, 12),
+                    "crosshair": True, "crosshair-color": _botskin,
+                    "crosshair-info": True, "money-info": True,
+                    "show-earned-money": False, "keys":{},
+                    "show-hud": False, "start-at": _botpos,
+                    "sniper-sight-color": [_botskin+(50,),_botskin+(50,)],
+                    "autokill-crawling-bruns": True,
+                    "autobuy-list": kwargs.get('autobuy-list', _autobuy)}
+
+        Player.__init__(self, _profile, **kwargs)
+
+        # Hello message
+        ppnames = ", ".join(map(lambda x: x.profile["name"],
+                                self.field.allplayers()))
+        if self.flood:
+            self.say0("Hey %s let's kill them all!"%ppnames)
+
+        # Start keeping some area of the field
+        self.keep = None
+        self.keep_desider()
+
+    def set_keep(self, keep):
+        if self.keep != keep:
+            self.keep = keep
+            if self.flood:
+                self.say0("I'm going to keep %s side of the field"%self.keep)
+
+    def keep_desider(self):
+        if self.keep is None:
+            self.set_keep("down")
+        elif self.keep == "down":
+            pass
+        elif self.keep == "up":
+            pass
+            
+    def generate_keys(self, f):
+        """Analyse the field F and generate appropriate key presses."""
+        _fypos = self.yy() - self.weapon.aim_position
+        _srect = pygame.Rect(0, _fypos, self.scs.rect.x, 1)
+        _fens = []
+        _xen = None
+        for e in f.creatures(Enemy):
+            if _srect.colliderect(e.scs.rect):
+                _fens.append(e)
+            if not _xen or e.scs.rect.x > _xen.scs.rect.x:
+                _xen = e
+
+        kret = []
+        if _fens:
+            kret.append('fire')
+        if _xen and _xen not in _fens:
+            if _xen.scs.rect.y > _fypos:
+                kret.append('down')
+            else:
+                kret.append('up')
+        return kret
+
+    def tick(self, f):
+        self.keysdown = set(self.generate_keys(f))
+        Player.tick(self, f)
 
 # Few command decorators, see below the usage
 def event_type(et):

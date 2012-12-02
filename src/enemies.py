@@ -94,7 +94,7 @@ class Enemy(AnimateStates, Creature):
                    and self.state_idx == self.state_frames()-1:
                 # Dead, quiescent and all frames are show
                 f.remove(self)
-                f.draw_static(self.image, self.rect.x, self.rect.y)
+                f.draw_static(self.scs.image, *self.scs.rect.topleft)
                 return
 
         AnimateStates.tick(self, f)
@@ -112,7 +112,7 @@ class Enemy(AnimateStates, Creature):
         if not self.can_press: return
 
         def pcollides(player):
-            return self.rect.collidepoint(player.rect.center)
+            return self.scs.rect.collidepoint(player.scs.rect.center)
 
         for pp in filter(pcollides, f.players):
             # Start pushing the player
@@ -615,9 +615,10 @@ class Vits(Enemy):
             # GIB
             gibimg = choice(self.gibs)
             gibrect = gibimg.get_rect()
-            xoff = (self.rect.width-gibrect.width)/2
-            yoff = (self.rect.height-gibrect.height)/2
-            self.field.draw_static(gibimg, self.rect.x+xoff, self.rect.y+yoff)
+            _srect = self.scs.rect
+            xoff = (_srect.width-gibrect.width)/2
+            yoff = (_srect.height-gibrect.height)/2
+            self.field.draw_static(gibimg, _srect.x+xoff, _srect.y+yoff)
 
             gparts = [("Blood/Gib/VitSealHead", 4)]
             if self.gibs.index(gibimg) in [0, 2, 3, 5, 6]:
@@ -738,7 +739,7 @@ class Pingvin(Enemy, WithYSpeed):
         if self.state in _ruldeaths and self.is_quiescent() \
                and self.state_idx < self.state_frames()-1:
             f.remove(self)
-            f.draw_static(self.image, self.rect.x, self.rect.y)
+            f.draw_static(self.scs.image, *self.scs.rect.topleft)
             return
 
         if self.state == "RullDeathStart" \
@@ -805,9 +806,9 @@ class Bear(Enemy):
     def press_players(self, f):
         # Bear can butt the player or make him sit
         players = f.players
-        pix = self.rect.collidelistall(map(lambda p: p.rect, players))
+        pix = self.scs.rect.collidelistall(map(mvo_rect, players))
         pixp = [players[pi] for pi in pix]
-        _bh = self.rect.h
+        _bh = self.scs.rect.h
         for pl in [players[pi] for pi in pix]:
             if pl.z > _bh:
                 # Player in air, do not press
@@ -1037,7 +1038,7 @@ class Valross(Enemy):
                    and self.state_idx == self.state_frames()-1:
                 # Dead, quiescent and all frames are show
                 f.remove(self)
-                f.draw_static(self.image, self.rect.x, self.rect.y)
+                f.draw_static(self.scs.image, *self.scs.rect.topleft)
 
         AnimateStates.tick(self, f)
         self.press_players(f)

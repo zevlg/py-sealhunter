@@ -142,7 +142,6 @@ class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
         self.add(self.scs)
 
         # Check the code that has been using this stuff
-        
 #     def __getattr__(self, attr):
 #         if attr == "rect": return self.scs.rect
 #         elif attr == "image": return self.scs.image
@@ -162,7 +161,7 @@ class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
         x, y = self.scs.rect.center
         y += self.z
 
-        # Update the layer
+        # ARGUABLE: Update the layer
 #         if abs(self.y - self.scs._layer) > 2:
 #             f.change_layer(self.scs, self.y)
 
@@ -177,6 +176,11 @@ class MovingObj(pygame.sprite.OrderedUpdates, SHobj, WithReflection):
 #             f.remove(self)
 #         else:
 #        self.update()
+
+def mvo_rect(o):
+    """Return rectangle of the moving object O.
+Convenient function to be used with map()."""
+    return o.scs.rect
 
 class Animate(pygame.sprite.OrderedUpdates):
     def __init__(self, adir, **kwargs):

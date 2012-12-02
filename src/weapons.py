@@ -189,7 +189,7 @@ class Weapon(pygame.sprite.Group, WithReflection):
         _ymin = min(bullets[0].fy, *_bullys)
         _ymax = max(bullets[0].fy, *_bullys)
         _brect = pygame.Rect(0, _ymin, bullets[0].fx, _ymax - _ymin)
-        _crts = filter(lambda x: _brect.colliderect(x.rect),
+        _crts = filter(lambda x: _brect.colliderect(x.scs.rect),
                        f.creatures())
 ##        _ocrts = f.creatures()
 ##        _ocris = _brect.collidelistall(map(lambda c: c.rect, _ocrts))

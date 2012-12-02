@@ -49,13 +49,6 @@ class Field(LayeredDirty):
         # System font, for messages and FPS
         self.sfont = load_font("default.ttf", 14)
 
-        # Decoration using Tree
-        if 'tree' in option("show"):
-            self.tree = pygame.sprite.DirtySprite()
-            sprite_image(self.tree, load_texture("Misc/tree.png", True))
-            sprite_move(self.tree, 100, 100)
-            self.add(self.tree, layer=100+60)
-
         # FPS drawer if needed
         if "fps" in option("show"):
             self.fps = pygame.sprite.GroupSingle()
@@ -76,7 +69,7 @@ class Field(LayeredDirty):
         _ssh = self.msgs_linesize * option("max-messages")
         sprite_image(self.msgs, pygame.Surface((640, _ssh)))
         sprite_move(self.msgs, 0, 71)
-        self.add(self.msgs, layer=TOP_LAYER)
+        self.add(self.msgs, layer=0)
 
         # Sprite for level's progress
         self.lp_font = load_font('trebuc.ttf', 14)
@@ -314,7 +307,7 @@ class Field(LayeredDirty):
                    and (all or c.is_alive())
         return filter(suited_creature, self.objects)
 
-    def players(self):
+    def allplayers(self):
         """Return list of players in the field."""
         return self.creatures(Player, all=True)
 
@@ -363,6 +356,10 @@ class Field(LayeredDirty):
         if not self.show_messages:
             self.msg_ticks = self.ticks
         self.show_messages.append(msg)
+
+        if len(self.show_messages) > option("max-messages"):
+            self.show_messages = self.show_messages[1:]
+
         self.update_messages()
 
     def handle_event(self, event):
