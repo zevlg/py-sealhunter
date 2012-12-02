@@ -199,6 +199,7 @@ def exec_file(c, arg):
         line = line.lstrip()
         return not line or line[0] != "#"
 
+    c.this_cmd = "exec"
     with open(arg, "r") as f:
         lnum = 0
         for lnum, line in ifilter(not_comment, enumerate(f)):
@@ -210,6 +211,11 @@ def exec_file(c, arg):
                     c.send_python(line)
             except Exception as err:
                 c.message("Error (%s) line=%d: %s"%(err.__class__, lnum, err))
+
+    # Run post exec hooks
+    if c.post_cmd:
+        c.post_cmd()
+    c.post_cmd = None
 
 ##                err = c.safe_send_command(l[:-1])
 ##                if err:
@@ -319,7 +325,9 @@ class ParseError(Exception):
 class Console:
     def __init__(self, screen, rect, locals={}):
         self.keymap = {}
-        self.last_cmd_event = None
+        self.this_cmd_event = None
+        self.this_cmd = None
+        self.post_cmd = None
 
         if not pygame.display.get_init():
             raise pygame.error, "Display not initialized. Initialize the display before creating a Console"
@@ -621,6 +629,7 @@ class Console:
                 # Show command usage
                 self.message("Error: %s"%err)
                 self.message(commands[cmd].__doc__)
+
         self.release_output()
 
     def send_python(self, text):
@@ -821,7 +830,7 @@ In effect giving the user the ability to do anything python can.
     def self_insert(self):
         """Self insert last event char."""
         # reset completions list on any input
-        self.c_in = self.str_insert(self.c_in, self.last_cmd_event.unicode)
+        self.c_in = self.str_insert(self.c_in, self.this_cmd_event.unicode)
 
     def process_input(self):
         '''\
@@ -834,7 +843,7 @@ In effect giving the user the ability to do anything python can.
             if event.type == KEYDOWN:
                 self.changed = True
 
-                self.last_cmd_event = event
+                self.this_cmd_event = event
 
                 ## Special Character Manipulation
                 if event.key in CONSOLE_KEYS:

@@ -569,11 +569,11 @@ class AIPlayer(Player):
         _botskin = (randint(0, 255), randint(0,255), randint(0,255))
         _botpos = (randint(500, 638), randint(190, 400))
         _profile = {"name": _botname, "enabled": False,
-                    "skin": _botskin, "hud-position": (0, 12),
+                    "skin": _botskin, "hud-position": (590, 12),
                     "crosshair": True, "crosshair-color": _botskin,
                     "crosshair-info": True, "money-info": True,
                     "show-earned-money": False, "keys":{},
-                    "show-hud": False, "start-at": _botpos,
+                    "show-hud": True, "start-at": _botpos,
                     "sniper-sight-color": [_botskin+(50,),_botskin+(50,)],
                     "autokill-crawling-bruns": True,
                     "autobuy-list": kwargs.get('autobuy-list', _autobuy)}

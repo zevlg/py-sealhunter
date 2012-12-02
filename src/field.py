@@ -387,10 +387,7 @@ class Field(LayeredDirty):
         self.players = self.creatures(Player, all=True)
         self.level = new_level(self, n)
 
-    def run(self):
-        """Run the field untli game is over."""
-        self.run_level(1)
-
+    def run0(self):
         while not self.game_over:
             for pyev in pygame.event.get():
                 self.handle_event(pyev)
@@ -399,3 +396,18 @@ class Field(LayeredDirty):
 
         # XXX Stop all sounds
         pygame.mixer.stop()
+
+        # Print the stats
+        for p in self.players:
+            p.print_pstats()
+
+    def run(self):
+        """Run the field untli game is over."""
+        self.run_level(1)
+
+        # Run in post cmd hook if executing console command
+        self.console.message("this cmd: %s"%self.console.this_cmd)
+        if self.console.this_cmd:
+            self.console.post_cmd = self.run0
+        else:
+            self.run0()

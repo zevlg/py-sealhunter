@@ -65,10 +65,6 @@ def new_game(players_names, cons=None):
     # Start the game
     fld.run()
 
-    # print players stats
-    for p in fld.players:
-        p.print_pstats()
-
 ##    players = filter(lambda p: p["name"] in players_names, option("players"))
 ##    # Field to play on
 ##    fld = field.Field(len(players))
